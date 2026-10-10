@@ -64,6 +64,7 @@ import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.IRemoteCallback;
 import android.os.Process;
+import android.os.UserHandle;
 import android.os.Trace;
 import android.provider.Settings;
 import android.util.Log;
@@ -84,6 +85,7 @@ import androidx.annotation.VisibleForTesting;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.android.internal.util.NavigationBarUtils;
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.DeviceProfile;
@@ -206,6 +208,8 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
     private boolean mIsTaskbarSizeFrozenForAnimatingBubble;
 
     private NavigationMode mNavMode;
+    private int mButtonNavigationHeightScale;
+    private int mButtonNavigationIconColor;
     private boolean mImeDrawsImeNavBar;
     private final ViewCache mViewCache = new ViewCache();
 
@@ -423,6 +427,10 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                     .build();
         }
         mNavMode = DisplayController.getNavigationMode(this);
+        mButtonNavigationHeightScale = NavigationBarUtils.getHeightScale(
+                getContentResolver(), UserHandle.myUserId());
+        mButtonNavigationIconColor = NavigationBarUtils.getIconColor(
+                getContentResolver(), UserHandle.myUserId());
     }
 
     /** Called when the visibility of the bubble bar changed. */
@@ -1162,6 +1170,20 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         notifyUpdateLayoutParams();
     }
 
+    public int scalePhoneButtonNavSize(int size) {
+        return isPhoneButtonNavMode() && size > 0
+                ? NavigationBarUtils.scaleSize(size, mButtonNavigationHeightScale) : size;
+    }
+
+    public int getPhoneNavbarSize() {
+        return scalePhoneButtonNavSize(
+                getResources().getDimensionPixelSize(R.dimen.taskbar_phone_size));
+    }
+
+    public int getButtonNavigationIconColor() {
+        return isPhoneButtonNavMode() ? mButtonNavigationIconColor : 0;
+    }
+
     /**
      * Returns the default size (in most cases height, but in 3-button phone mode, width) of the
      * window, including the static corner radii above taskbar.
@@ -1175,7 +1197,7 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
 
         if (isPhoneMode()) {
             return isThreeButtonNav() ?
-                    resources.getDimensionPixelSize(R.dimen.taskbar_phone_size) :
+                    getPhoneNavbarSize() :
                     resources.getDimensionPixelSize(R.dimen.taskbar_stashed_size);
         }
 

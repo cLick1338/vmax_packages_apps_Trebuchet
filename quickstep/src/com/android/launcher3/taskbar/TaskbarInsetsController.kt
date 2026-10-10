@@ -69,7 +69,9 @@ class TaskbarInsetsController(val context: TaskbarActivityContext) : LoggableTas
     }
 
     /** The bottom insets taskbar provides to the IME when IME is visible. */
-    val taskbarHeightForIme: Int = context.resources.getDimensionPixelSize(R.dimen.taskbar_ime_size)
+    val taskbarHeightForIme: Int = context.scalePhoneButtonNavSize(
+        context.resources.getDimensionPixelSize(R.dimen.taskbar_ime_size)
+    )
     // The touchableRegion we will set unless some other state takes precedence.
     private val defaultTouchableRegion: Region = Region()
     private val insetsOwner: IBinder = Binder()

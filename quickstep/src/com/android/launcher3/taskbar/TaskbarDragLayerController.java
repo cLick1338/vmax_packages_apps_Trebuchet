@@ -299,7 +299,7 @@ public class TaskbarDragLayerController implements TaskbarControllers.LoggableTa
                         resources, true /* isPhoneMode */, mActivity.isGestureNav());
                 return taskbarDimensions.y == -1 ?
                         deviceProfile.getDisplayInfo().currentSize.y :
-                        taskbarDimensions.y;
+                        mActivity.scalePhoneButtonNavSize(taskbarDimensions.y);
             } else {
                 return deviceProfile.taskbarHeight;
             }

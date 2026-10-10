@@ -121,6 +121,12 @@ public class TaskbarManager {
     public static final Uri NAV_BAR_INVERSE = Settings.Secure.getUriFor(
             "sysui_nav_bar_inverse");
 
+    private static final Uri BUTTON_NAVIGATION_HEIGHT = Settings.Secure.getUriFor(
+            Settings.Secure.BUTTON_NAVIGATION_HEIGHT);
+
+    private static final Uri BUTTON_NAVIGATION_ICON_COLOR = Settings.Secure.getUriFor(
+            Settings.Secure.BUTTON_NAVIGATION_ICON_COLOR);
+
     public static final Uri ENABLE_TASKBAR = LineageSettings.System.getUriFor(
             LineageSettings.System.ENABLE_TASKBAR);
 
@@ -269,6 +275,10 @@ public class TaskbarManager {
                 .register(NAV_BAR_KIDS_MODE, mOnSettingsChangeListener);
         SettingsCache.INSTANCE.get(mWindowContext)
                 .register(NAV_BAR_INVERSE, mOnSettingsChangeListener);
+        SettingsCache.INSTANCE.get(mWindowContext)
+                .register(BUTTON_NAVIGATION_HEIGHT, mOnSettingsChangeListener);
+        SettingsCache.INSTANCE.get(mWindowContext)
+                .register(BUTTON_NAVIGATION_ICON_COLOR, mOnSettingsChangeListener);
         SettingsCache.INSTANCE.get(mWindowContext)
                 .register(ENABLE_TASKBAR, mOnTaskBarChangeListener);
         SettingsCache.INSTANCE.get(mWindowContext)
@@ -749,6 +759,10 @@ public class TaskbarManager {
                 .unregister(NAV_BAR_KIDS_MODE, mOnSettingsChangeListener);
         SettingsCache.INSTANCE.get(mWindowContext)
                 .unregister(NAV_BAR_INVERSE, mOnSettingsChangeListener);
+        SettingsCache.INSTANCE.get(mWindowContext)
+                .unregister(BUTTON_NAVIGATION_HEIGHT, mOnSettingsChangeListener);
+        SettingsCache.INSTANCE.get(mWindowContext)
+                .unregister(BUTTON_NAVIGATION_ICON_COLOR, mOnSettingsChangeListener);
         SettingsCache.INSTANCE.get(mWindowContext)
                 .unregister(ENABLE_TASKBAR, mOnTaskBarChangeListener);
         SettingsCache.INSTANCE.get(mWindowContext)

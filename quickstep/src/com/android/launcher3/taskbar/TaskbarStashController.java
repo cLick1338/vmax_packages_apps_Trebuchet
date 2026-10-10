@@ -300,8 +300,7 @@ public class TaskbarStashController implements TaskbarControllers.LoggableTaskba
         mTaskbarBackgroundDuration =
                 activity.getResources().getInteger(R.integer.taskbar_background_duration);
         if (mActivity.isPhoneMode()) {
-            mUnstashedHeight = mActivity.getResources().getDimensionPixelSize(
-                    R.dimen.taskbar_phone_size);
+            mUnstashedHeight = mActivity.getPhoneNavbarSize();
             mStashedHeight = SettingsCache.INSTANCE.get(mActivity).getValue(NAVIGATION_BAR_HINT, 1)
                     ? mActivity.getResources().getDimensionPixelSize(R.dimen.taskbar_stashed_size)
                     : 0;

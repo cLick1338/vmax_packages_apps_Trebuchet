@@ -281,8 +281,8 @@ public class NavbarButtonsViewController implements TaskbarControllers.LoggableT
         Point p = DimensionUtils.getTaskbarPhoneDimensions(deviceProfile, resources,
                 mContext.isPhoneMode(), mContext.isGestureNav());
         ViewGroup.LayoutParams navButtonsViewLayoutParams = mNavButtonsView.getLayoutParams();
-        navButtonsViewLayoutParams.width = p.x;
-        navButtonsViewLayoutParams.height = p.y;
+        navButtonsViewLayoutParams.width = mContext.scalePhoneButtonNavSize(p.x);
+        navButtonsViewLayoutParams.height = mContext.scalePhoneButtonNavSize(p.y);
         mNavButtonsView.setLayoutParams(navButtonsViewLayoutParams);
 
         mIsImeRenderingNavButtons =
@@ -811,8 +811,12 @@ public class NavbarButtonsViewController implements TaskbarControllers.LoggableT
      * Iteratively sets button colors for each button in {@link #mAllButtons}.
      */
     private void applyButtonColors(int iconColor) {
+        int customColor = mContext.getButtonNavigationIconColor();
         for (ImageView button : mAllButtons) {
-            button.setImageTintList(ColorStateList.valueOf(iconColor));
+            boolean isNavigationButton = button == mBackButton || button == mHomeButton
+                    || button == mRecentsButton;
+            int color = customColor != 0 && isNavigationButton ? customColor : iconColor;
+            button.setImageTintList(ColorStateList.valueOf(color));
             Drawable background = button.getBackground();
             if (background instanceof KeyButtonRipple) {
                 ((KeyButtonRipple) background).setDarkIntensity(
