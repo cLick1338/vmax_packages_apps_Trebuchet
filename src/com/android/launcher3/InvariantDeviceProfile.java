@@ -627,7 +627,11 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
                         && GridOption.TAG_NAME.equals(parser.getName())) {
                     GridOption gridOption = new GridOption(
                             context, Xml.asAttributeSet(parser), displayInfo);
-                    if (firstGridFilter(gridOption, displayInfo.getDeviceType(), allowDisabledGrid,
+                    // Keep the selected grid across resolution and density changes.
+                    boolean isSelectedGrid = !TextUtils.isEmpty(gridName)
+                            && gridName.equals(gridOption.name);
+                    if (firstGridFilter(gridOption, displayInfo.getDeviceType(),
+                            allowDisabledGrid || isSelectedGrid,
                             isFixedLandscapeMode)) {
                         final int displayDepth = parser.getDepth();
                         while (((type = parser.next()) != XmlPullParser.END_TAG
@@ -648,8 +652,7 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
         ArrayList<DisplayOption> filteredProfiles = new ArrayList<>();
         if (!TextUtils.isEmpty(gridName)) {
             for (DisplayOption option : profiles) {
-                if (gridName.equals(option.grid.name) && (option.grid.isEnabled(
-                        displayInfo.getDeviceType()) || allowDisabledGrid)) {
+                if (gridName.equals(option.grid.name)) {
                     filteredProfiles.add(option);
                 }
             }
