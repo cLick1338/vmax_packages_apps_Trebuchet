@@ -22,6 +22,7 @@ import android.graphics.Rect;
 
 import com.android.launcher3.Flags;
 import com.android.launcher3.Launcher;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.LauncherState;
 import com.android.quickstep.views.RecentsView;
 
@@ -45,7 +46,16 @@ public class OverviewModalTaskState extends OverviewState {
 
     @Override
     public int getVisibleElements(Launcher launcher) {
-        return OVERVIEW_ACTIONS | CLEAR_ALL_BUTTON;
+        boolean memInfo = LauncherPrefs.getPrefs(launcher).getBoolean("pref_recents_meminfo", false);
+        boolean clearAll = LauncherPrefs.getPrefs(launcher).getBoolean("pref_recents_clear_all", true);
+        int elements = OVERVIEW_ACTIONS;
+        if (memInfo) {
+            elements |= MEMINFO;
+        }
+        if (!clearAll) {
+            elements |= CLEAR_ALL_BUTTON;
+        }
+        return elements;
     }
 
     @Override

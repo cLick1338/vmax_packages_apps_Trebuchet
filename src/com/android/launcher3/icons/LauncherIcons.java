@@ -17,9 +17,12 @@
 package com.android.launcher3.icons;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.drawable.Drawable;
 import android.os.UserHandle;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.android.launcher3.InvariantDeviceProfile;
 import com.android.launcher3.graphics.IconShape;
@@ -71,6 +74,23 @@ public class LauncherIcons extends BaseIconFactory implements AutoCloseable {
     public void recycle() {
         clear();
         mPool.add(this);
+    }
+
+    @NonNull
+    @Override
+    public BitmapInfo createBadgedIconBitmap(@NonNull Drawable icon,
+            @Nullable IconOptions options) {
+        if (!(icon instanceof ThirdPartyIconUtils.IconPackDrawable packIcon)) {
+            return super.createBadgedIconBitmap(icon, options);
+        }
+
+        Drawable artwork = packIcon.getDrawable();
+        float scale = getNormalizer().getScale(artwork, null, null, null);
+        Bitmap bitmap = createIconBitmap(artwork, scale,
+                options == null ? MODE_WITH_SHADOW : options.mGenerationMode);
+        BitmapInfo info = options != null && options.mExtractedColor != null
+                ? BitmapInfo.of(bitmap, options.mExtractedColor) : createIconBitmap(bitmap);
+        return info.withFlags(getBitmapFlagOp(options));
     }
 
     @NonNull

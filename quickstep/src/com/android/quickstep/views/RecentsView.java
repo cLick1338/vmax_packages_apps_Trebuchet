@@ -18,6 +18,7 @@ package com.android.quickstep.views;
 
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.view.Surface.ROTATION_0;
+import static android.view.Surface.ROTATION_180;
 import static android.view.View.MeasureSpec.EXACTLY;
 import static android.view.View.MeasureSpec.makeMeasureSpec;
 
@@ -40,6 +41,7 @@ import static com.android.launcher3.Flags.enableDesktopTaskAlphaAnimation;
 import static com.android.launcher3.Flags.enableGridOnlyOverview;
 import static com.android.launcher3.Flags.enableLargeDesktopWindowingTile;
 import static com.android.launcher3.Flags.enableRefactorTaskThumbnail;
+import static com.android.launcher3.LauncherAnimUtils.SCALE_PROPERTY;
 import static com.android.launcher3.LauncherAnimUtils.SUCCESS_TRANSITION_PROGRESS;
 import static com.android.launcher3.LauncherAnimUtils.VIEW_ALPHA;
 import static com.android.launcher3.LauncherAnimUtils.VIEW_BACKGROUND_COLOR;
@@ -609,6 +611,8 @@ public abstract class RecentsView<
 
     private int[] mDismissPrimaryTranslations;
 
+    private float mScrollScale = 1f;
+
     /**
      * TODO: Call reloadIdNeeded in onTaskStackChanged.
      */
@@ -801,6 +805,7 @@ public abstract class RecentsView<
     private OverviewActionsView mActionsView;
     private ObjectAnimator mActionsViewAlphaAnimator;
     private float mActionsViewAlphaAnimatorFinalValue;
+    private MemInfoView mMemInfoView;
 
     @Nullable
     private DesktopRecentsTransitionController mDesktopRecentsTransitionController;
@@ -930,6 +935,8 @@ public abstract class RecentsView<
         mContainer.getViewCache().setCacheSize(R.layout.digital_wellbeing_toast, 5);
 
         mTintingColor = getForegroundScrimDimColor(context);
+
+        mScrollScale = getResources().getFloat(R.dimen.overview_scroll_scale);
 
         // if multi-instance feature is enabled
         if (FeatureFlags.ENABLE_MULTI_INSTANCE.get()) {
@@ -1158,13 +1165,15 @@ public abstract class RecentsView<
     }
 
     public void init(OverviewActionsView actionsView, SplitSelectStateController splitController,
-            @Nullable DesktopRecentsTransitionController desktopRecentsTransitionController) {
+            @Nullable DesktopRecentsTransitionController desktopRecentsTransitionController,
+            MemInfoView memInfoView) {
         mActionsView = actionsView;
         mActionsView.updateHiddenFlags(HIDDEN_NO_TASKS, getTaskViewCount() == 0);
         // Update flags for 1p/3p launchers
         mActionsView.updateFor3pLauncher(!supportsAppPairs());
         mSplitSelectStateController = splitController;
         mDesktopRecentsTransitionController = desktopRecentsTransitionController;
+        mMemInfoView = memInfoView;
     }
 
     public SplitSelectStateController getSplitSelectController() {
@@ -2158,8 +2167,10 @@ public abstract class RecentsView<
         mClearAllButton.setFullscreenProgress(fullscreenProgress);
 
         // Fade out the actions view quickly (0.1 range)
-        mActionsView.getFullscreenAlpha().updateValue(
-                mapToRange(fullscreenProgress, 0, 0.1f, 1f, 0f, LINEAR));
+        float alpha = mapToRange(fullscreenProgress, 0, 0.1f, 1f, 0f, LINEAR);
+        mActionsView.getFullscreenAlpha().updateValue(alpha);
+        mMemInfoView.setAlpha(MemInfoView.ALPHA_FS_PROGRESS, alpha);
+        mMemInfoView.setVisibility(alpha > 0f ? View.VISIBLE : View.GONE);
     }
 
     private void updateTaskStackListenerState() {
@@ -2795,7 +2806,7 @@ public abstract class RecentsView<
         return enableDesktopTaskAlphaAnimation() && getRunningTaskView() instanceof DesktopTaskView;
     }
 
-    private boolean isGestureActive() {
+    protected boolean isGestureActive() {
         return mActiveGestureRunningTasks != null;
     }
 
@@ -3571,17 +3582,19 @@ public abstract class RecentsView<
                 splitAnimInitProps.getOriginalView(),
                 splitAnimInitProps.getOriginalBitmap(),
                 splitAnimInitProps.getIconDrawable(), startingTaskRect);
-        firstFloatingTaskView.setAlpha(1);
-        firstFloatingTaskView.addStagingAnimation(anim, startingTaskRect, mTempRect,
-                splitAnimInitProps.getFadeWithThumbnail(), splitAnimInitProps.isStagedTask());
-        mSplitSelectStateController.setFirstFloatingTaskView(firstFloatingTaskView);
+        if (firstFloatingTaskView != null) {
+            firstFloatingTaskView.setAlpha(1);
+            firstFloatingTaskView.addStagingAnimation(anim, startingTaskRect, mTempRect,
+                    splitAnimInitProps.getFadeWithThumbnail(), splitAnimInitProps.isStagedTask());
+            mSplitSelectStateController.setFirstFloatingTaskView(firstFloatingTaskView);
 
-        // Allow user to click staged app to launch into fullscreen
-        firstFloatingTaskView.setOnClickListener(view ->
-                mSplitSelectStateController.getSplitAnimationController().
-                        playAnimPlaceholderToFullscreen(mContainer, view,
-                                Optional.of(() -> resetFromSplitSelectionState())));
-        firstFloatingTaskView.setContentDescription(splitAnimInitProps.getContentDescription());
+            // Allow user to click staged app to launch into fullscreen
+            firstFloatingTaskView.setOnClickListener(view ->
+                    mSplitSelectStateController.getSplitAnimationController().
+                            playAnimPlaceholderToFullscreen(mContainer, view,
+                                    Optional.of(() -> resetFromSplitSelectionState())));
+            firstFloatingTaskView.setContentDescription(splitAnimInitProps.getContentDescription());
+        }
 
         // SplitInstructionsView: animate in
         safeRemoveDragLayerView(mSplitSelectStateController.getSplitInstructionsView());
@@ -3880,8 +3893,44 @@ public abstract class RecentsView<
             } else if (!showAsGrid || (enableLargeDesktopWindowingTile()
                     && dismissedTaskView != null && dismissedTaskView.isLargeTile()
                     && nextFocusedTaskView == null && !dismissingForSplitSelection)) {
+
                 int offset = getOffsetToDismissedTask(scrollDiffPerPage, dismissedIndex, taskCount);
                 int scrollDiff = newScroll[i] - oldScroll[i] + offset;
+                if (i == dismissedIndex + 1 ||
+                        dismissedIndex == taskCount -1 && i == dismissedIndex - 1) {
+                    if (child.getScaleX() <= dismissedTaskView.getScaleX()) {
+                        anim.setFloat(child, SCALE_PROPERTY,
+                            dismissedTaskView.getScaleX(), LINEAR);
+                        if (child instanceof TaskView && mRemoteTargetHandles != null) {
+                            TaskView tv = (TaskView) child;
+                            for (RemoteTargetHandle rth : mRemoteTargetHandles) {
+                                TransformParams params = rth.getTransformParams();
+                                RemoteAnimationTargets targets = params.getTargetSet();
+                                boolean match = false;
+                                for (int id : tv.getTaskIds()) {
+                                    if (targets != null && targets.findTask(id) != null) {
+                                        match = true;
+                                    }
+                                }
+                                if (match) {
+                                    anim.addOnFrameCallback(() -> {
+                                        rth.getTaskViewSimulator().scrollScale.value =
+                                                getPagedOrientationHandler().getPrimaryValue(
+                                                    tv.getScaleX(),
+                                                    tv.getScaleY()
+                                                );
+                                        // if scrollDiff != 0, we redraw in later(AOSP) code
+                                        if (mEnableDrawingLiveTile && scrollDiff == 0) {
+                                            redrawLiveTile();
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    } else
+                        anim.setFloat(child, SCALE_PROPERTY, 1f, LINEAR);
+                }
+
                 if (scrollDiff != 0) {
                     translateTaskWhenDismissed(
                             child,
@@ -4532,6 +4581,10 @@ public abstract class RecentsView<
         mContainer.getStatsLogManager().logger().log(LAUNCHER_TASK_CLEAR_ALL);
     }
 
+    public void dismissAllTasks() {
+        dismissAllTasks(null);
+    }
+
     private void dismissCurrentTask() {
         TaskView taskView = getNextPageTaskView();
         if (taskView != null) {
@@ -4775,6 +4828,7 @@ public abstract class RecentsView<
                         .setScroll(getScrollOffset()));
         setImportantForAccessibility(isModal() ? IMPORTANT_FOR_ACCESSIBILITY_NO
                 : IMPORTANT_FOR_ACCESSIBILITY_AUTO);
+        doScrollScale();
     }
 
     private void updatePivots() {
@@ -5327,6 +5381,7 @@ public abstract class RecentsView<
                 .addScrimBehindAnim(pendingAnimation, mContainer, getContext());
         FloatingTaskView firstFloatingTaskView =
                 mSplitSelectStateController.getFirstFloatingTaskView();
+        if (firstFloatingTaskView == null) return false;
         firstFloatingTaskView.getBoundsOnScreen(firstTaskStartingBounds);
         firstFloatingTaskView.addConfirmAnimation(pendingAnimation,
                 new RectF(firstTaskStartingBounds), firstTaskEndingBounds,
@@ -5466,8 +5521,10 @@ public abstract class RecentsView<
         mTempRectF.set(mTempRect);
         FloatingTaskView firstFloatingTaskView =
                 mSplitSelectStateController.getFirstFloatingTaskView();
-        firstFloatingTaskView.updateOrientationHandler(getPagedOrientationHandler());
-        firstFloatingTaskView.update(mTempRectF, /*progress=*/1f);
+        if (firstFloatingTaskView != null) {
+            firstFloatingTaskView.updateOrientationHandler(getPagedOrientationHandler());
+            firstFloatingTaskView.update(mTempRectF, /*progress=*/1f);
+        }
 
         RecentsPagedOrientationHandler orientationHandler = getPagedOrientationHandler();
         Pair<FloatProperty<RecentsView>, FloatProperty<RecentsView>> taskViewsFloat =
@@ -6645,6 +6702,75 @@ public abstract class RecentsView<
     protected void onScrollChanged(int l, int t, int oldl, int oldt) {
         super.onScrollChanged(l, t, oldl, oldt);
         dispatchScrollChanged();
+        doScrollScale();
+    }
+
+    private void doScrollScale() {
+        if (showAsGrid() || mContainer.getDeviceProfile().isTablet) return;
+        if (!isPageScrollsInitialized()) return;
+
+        //nick@lmo-20231004 if rotating launcher is enabled, rotation works differently
+        // There are many edge cases (going from landscape app to recents, rotating in recents etc)
+        boolean touchInLandscape = mOrientationState.getTouchRotation() != ROTATION_0
+                                && mOrientationState.getTouchRotation() != ROTATION_180;
+        boolean layoutInLandscape = mOrientationState.getRecentsActivityRotation() != ROTATION_0
+                                && mOrientationState.getRecentsActivityRotation() != ROTATION_180;
+        boolean canRotateRecents = mOrientationState.isRecentsActivityRotationAllowed();
+        int childCount = Math.min(mPageScrolls.length, getChildCount());
+        int curScroll = !canRotateRecents && touchInLandscape && !layoutInLandscape
+                             ? getScrollY() : getScrollX();
+
+        for (int i = 0; i < childCount; i++) {
+            View child = getChildAt(i);
+            int scaleArea = child.getWidth() + mPageSpacing;
+            int childPosition = mPageScrolls[i];
+            int scrollDelta = Math.abs(curScroll - childPosition);
+            if (scrollDelta > scaleArea) {
+                child.setScaleX(mScrollScale);
+                child.setScaleY(mScrollScale);
+            } else {
+                float scale = mapToRange(scrollDelta, 0, scaleArea, 1f, mScrollScale, LINEAR);
+                child.setScaleX(scale);
+                child.setScaleY(scale);
+            }
+            if (!(child instanceof TaskView && mRemoteTargetHandles != null)) continue;
+            TaskView tv = (TaskView) child;
+            for (RemoteTargetHandle rth : mRemoteTargetHandles) {
+                TransformParams params = rth.getTransformParams();
+                RemoteAnimationTargets targets = params.getTargetSet();
+                for (int id : tv.getTaskIds()) {
+                    if (targets != null && targets.findTask(id) != null) {
+                        rth.getTaskViewSimulator().scrollScale.value =
+                                getPagedOrientationHandler().getPrimaryValue(
+                                    tv.getScaleX(),
+                                    tv.getScaleY()
+                                );
+                    }
+                }
+            }
+        }
+    }
+
+    public float getScrollScale(RemoteTargetHandle rth) {
+        if (showAsGrid() || mContainer.getDeviceProfile().isTablet) return 1f;
+        if (!isPageScrollsInitialized()) return 1f;
+        int childCount = Math.min(mPageScrolls.length, getChildCount());
+        for (int i = 0; i < childCount; i++) {
+            View child = getChildAt(i);
+            if (!(child instanceof TaskView && !showAsGrid())) continue;
+            TaskView tv = (TaskView) child;
+            TransformParams params = rth.getTransformParams();
+            RemoteAnimationTargets targets = params.getTargetSet();
+            for (int id : tv.getTaskIds()) {
+                if (targets != null && targets.findTask(id) != null) {
+                    return getPagedOrientationHandler().getPrimaryValue(
+                                tv.getScaleX(),
+                                tv.getScaleY()
+                           );
+                }
+            }
+        }
+        return 1f;
     }
 
     /**

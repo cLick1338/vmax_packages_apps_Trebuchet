@@ -27,7 +27,7 @@ import com.android.launcher3.model.DeviceGridState
 import com.android.launcher3.pm.InstallSessionHelper
 import com.android.launcher3.provider.RestoreDbTask
 import com.android.launcher3.provider.RestoreDbTask.FIRST_LOAD_AFTER_RESTORE_KEY
-import com.android.launcher3.settings.SettingsActivity
+import com.android.launcher3.settings.SettingsMisc
 import com.android.launcher3.states.RotationHelper
 import com.android.launcher3.util.DisplayController
 import com.android.launcher3.util.MainThreadInitializedObject
@@ -148,12 +148,11 @@ abstract class LauncherPrefs : SafeCloseable {
         @JvmField
         val ALLOW_ROTATION =
             backedUpItem(RotationHelper.ALLOW_ROTATION_PREFERENCE_KEY, Boolean::class.java) {
-                RotationHelper.getAllowRotationDefaultValue(it,
-                        DisplayController.INSTANCE.get(it).info)
+                RotationHelper.getAllowRotationDefaultValue(it, DisplayController.INSTANCE.get(it).info)
             }
 
         @JvmField
-        val FIXED_LANDSCAPE_MODE = backedUpItem(SettingsActivity.FIXED_LANDSCAPE_MODE, false)
+        val FIXED_LANDSCAPE_MODE = backedUpItem(SettingsMisc.FIXED_LANDSCAPE_MODE, false)
 
         // Preferences for widget configurations
         @JvmField
@@ -442,6 +441,8 @@ data class ConstantItem<T>(
 ) : Item() {
 
     fun get(c: Context): T = LauncherPrefs.get(c).get(this)
+
+    fun getKey(): String = sharedPrefKey
 }
 
 data class ContextualItem<T>(
@@ -461,6 +462,8 @@ data class ContextualItem<T>(
     }
 
     fun get(c: Context): T = LauncherPrefs.get(c).get(this)
+
+    fun getKey(): String = sharedPrefKey
 }
 
 enum class EncryptionType {

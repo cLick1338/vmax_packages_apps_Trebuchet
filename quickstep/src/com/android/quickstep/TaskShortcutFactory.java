@@ -24,19 +24,25 @@ import static com.android.launcher3.Flags.enableRefactorTaskThumbnail;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_SYSTEM_SHORTCUT_FREE_FORM_TAP;
 import static com.android.launcher3.util.SplitConfigurationOptions.STAGE_POSITION_BOTTOM_OR_RIGHT;
 
+import android.app.ActivityManagerNative;
 import android.app.ActivityOptions;
+import android.app.IActivityManager;
+import android.content.ComponentName;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManagerGlobal;
 import android.window.SplashScreen;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 
@@ -48,6 +54,7 @@ import com.android.launcher3.model.WellbeingModel;
 import com.android.launcher3.popup.SystemShortcut;
 import com.android.launcher3.popup.SystemShortcut.AppInfo;
 import com.android.launcher3.util.InstantAppResolver;
+import com.android.launcher3.util.PackageManagerHelper;
 import com.android.launcher3.util.SplitConfigurationOptions.SplitPositionOption;
 import com.android.launcher3.views.ActivityContext;
 import com.android.quickstep.orientation.RecentsPagedOrientationHandler;
@@ -289,6 +296,8 @@ public interface TaskShortcutFactory {
         }
     }
 
+
+
     /**
      * Does NOT add split options in the following scenarios:
      * * 1. Taskbar is not present AND aren't at least 2 tasks in overview to show split options for
@@ -372,6 +381,17 @@ public interface TaskShortcutFactory {
         }
     };
 
+    TaskShortcutFactory UNINSTALL = new TaskShortcutFactory() {
+        @Override
+        public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
+                TaskContainer taskContainer) {
+            return PackageManagerHelper.isSystemApp(container.asContext(),
+                    taskContainer.getTask().getTopComponent().getPackageName()) ? null :
+                    Collections.singletonList(new SystemShortcut.UnInstall(container,
+                            taskContainer.getItemInfo(), taskContainer.getTaskView()));
+        }
+    };
+
     TaskShortcutFactory FREE_FORM = new TaskShortcutFactory() {
         @Override
         public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
@@ -397,6 +417,8 @@ public interface TaskShortcutFactory {
                     && !DesktopModeStatus.canEnterDesktopMode(container.asContext());
         }
     };
+
+
 
     TaskShortcutFactory PIN = new TaskShortcutFactory() {
         @Override
@@ -508,4 +530,48 @@ public interface TaskShortcutFactory {
             return createSingletonShortcutList(modalStateSystemShortcut);
         }
     };
+
+    TaskShortcutFactory KILL_APP = new TaskShortcutFactory() {
+        @Override
+        public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
+                TaskContainer taskContainer) {
+                    String packageName = taskContainer.getItemInfo().getTargetComponent().getPackageName();
+                    return Collections.singletonList(new KillSystemShortcut(container, taskContainer, packageName));
+        }
+    };
+
+    class KillSystemShortcut extends SystemShortcut {
+        private static final String TAG = "KillSystemShortcut";
+        private final TaskContainer mTaskContainer;
+        private final RecentsViewContainer mContainer;
+        private final String mPackageName;
+
+        public KillSystemShortcut(RecentsViewContainer container,
+                TaskContainer taskContainer, String packageName) {
+            super(R.drawable.ic_kill_app, R.string.recent_task_option_kill_app,
+                    container, taskContainer.getItemInfo(), taskContainer.getTaskView());
+            mTaskContainer = taskContainer;
+            mContainer = container;
+            mPackageName = packageName;
+        }
+
+        @Override
+        public void onClick(View view) {
+            if (mPackageName != null) {
+                IActivityManager iam = ActivityManagerNative.getDefault();
+                Task task = mTaskContainer.getTask();
+                if (task != null) {
+                    try {
+                        iam.forceStopPackage(mPackageName, task.key.userId);
+                        Toast appKilled = Toast.makeText(mContainer.asContext(), R.string.recents_app_killed,
+                            Toast.LENGTH_SHORT);
+                        appKilled.show();
+                        ((RecentsView)mContainer.getOverviewPanel())
+                              .dismissTask(mTaskContainer.getTaskView(), true /* animate */, true /* removeTask */);
+                    } catch (RemoteException e) { }
+                }
+            }
+            dismissTaskMenuView();
+        }
+    }
 }

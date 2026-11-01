@@ -48,6 +48,7 @@ import com.android.launcher3.InvariantDeviceProfile;
 import com.android.launcher3.LauncherAppState;
 import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
+import com.android.launcher3.Utilities;
 import com.android.launcher3.config.FeatureFlags;
 import com.android.launcher3.graphics.FragmentWithPreview;
 import com.android.launcher3.widget.util.WidgetSizes;
@@ -79,6 +80,9 @@ public class QsbContainerView extends FrameLayout {
             if (componentName != null) {
                 providerPkg = searchManager.getGlobalSearchActivity().getPackageName();
             }
+            if (providerPkg == null && Utilities.isGSAEnabled(context)) {
+                providerPkg = Utilities.GSA_PACKAGE;
+            }
         }
         return providerPkg;
     }
@@ -100,7 +104,7 @@ public class QsbContainerView extends FrameLayout {
         AppWidgetManager appWidgetManager = AppWidgetManager.getInstance(context);
         for (AppWidgetProviderInfo info :
                 appWidgetManager.getInstalledProvidersForPackage(providerPkg, null)) {
-            if (info.provider.getPackageName().equals(providerPkg) && info.configure == null) {
+            if (info.provider.getPackageName().equals(providerPkg)) {
                 if ((info.widgetCategory
                         & AppWidgetProviderInfo.WIDGET_CATEGORY_SEARCHBOX) != 0) {
                     return info;
@@ -292,8 +296,7 @@ public class QsbContainerView extends FrameLayout {
         }
 
         public boolean isQsbEnabled() {
-            return FeatureFlags.QSB_ON_FIRST_SCREEN
-                    && !SHOULD_SHOW_FIRST_PAGE_WIDGET;
+            return false;
         }
 
         protected Bundle createBindOptions() {

@@ -19,6 +19,7 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
+import android.os.Build;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.Log;
@@ -61,17 +62,18 @@ public class LauncherIconProvider extends IconProvider {
     public void setIconThemeSupported(boolean isSupported) {
         mSupportsIconTheme = isSupported;
         mThemedIconMap = isSupported && FeatureFlags.USE_LOCAL_ICON_OVERRIDES.get()
-                ? null : DISABLED_MAP;
+                ? getThemedIconMap() : DISABLED_MAP;
     }
 
     @Override
     protected ThemeData getThemeDataForPackage(String packageName) {
-        return getThemedIconMap().get(packageName);
+        return mThemedIconMap.get(packageName);
     }
 
     @Override
     public String getSystemIconState() {
-        return super.getSystemIconState() + (mSupportsIconTheme ? ",with-theme" : ",no-theme");
+        return super.getSystemIconState() + (mSupportsIconTheme ? ",with-theme" : ",no-theme")
+                + "," + Build.VERSION.INCREMENTAL;
     }
 
     @Override
@@ -80,9 +82,6 @@ public class LauncherIconProvider extends IconProvider {
     }
 
     private Map<String, ThemeData> getThemedIconMap() {
-        if (mThemedIconMap != null) {
-            return mThemedIconMap;
-        }
         ArrayMap<String, ThemeData> map = new ArrayMap<>();
         Resources res = mContext.getResources();
         try (XmlResourceParser parser = res.getXml(R.xml.grayscale_icon_map)) {
@@ -99,7 +98,7 @@ public class LauncherIconProvider extends IconProvider {
                 if (TAG_ICON.equals(parser.getName())) {
                     String pkg = parser.getAttributeValue(null, ATTR_PACKAGE);
                     int iconId = parser.getAttributeResourceValue(null, ATTR_DRAWABLE, 0);
-                    if (iconId != 0 && !TextUtils.isEmpty(pkg)) {
+                    if (iconId != 0 && pkg != null && !pkg.isEmpty()) {
                         map.put(pkg, new ThemeData(res, iconId));
                     }
                 }

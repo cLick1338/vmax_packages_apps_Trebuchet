@@ -48,7 +48,9 @@ import static com.android.launcher3.popup.SystemShortcut.APP_INFO;
 import static com.android.launcher3.popup.SystemShortcut.BUBBLE_SHORTCUT;
 import static com.android.launcher3.popup.SystemShortcut.DONT_SUGGEST_APP;
 import static com.android.launcher3.popup.SystemShortcut.INSTALL;
+import static com.android.launcher3.popup.SystemShortcut.KILL_APP;
 import static com.android.launcher3.popup.SystemShortcut.PRIVATE_PROFILE_INSTALL;
+import static com.android.launcher3.popup.SystemShortcut.UNINSTALL;
 import static com.android.launcher3.popup.SystemShortcut.UNINSTALL_APP;
 import static com.android.launcher3.popup.SystemShortcut.WIDGETS;
 import static com.android.launcher3.taskbar.LauncherTaskbarUIController.ALL_APPS_PAGE_PROGRESS_INDEX;
@@ -103,6 +105,8 @@ import androidx.annotation.BinderThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.android.app.viewcapture.ViewCaptureFactory;
 import com.android.launcher3.AbstractFloatingView;
@@ -135,8 +139,10 @@ import com.android.launcher3.popup.SystemShortcut;
 import com.android.launcher3.proxy.ProxyActivityStarter;
 import com.android.launcher3.statehandlers.DepthController;
 import com.android.launcher3.statehandlers.DesktopVisibilityController;
+import com.android.launcher3.statemanager.StateManager;
 import com.android.launcher3.statemanager.StateManager.AtomicAnimationFactory;
 import com.android.launcher3.statemanager.StateManager.StateHandler;
+import com.android.launcher3.statemanager.StateManager.StateListener;
 import com.android.launcher3.taskbar.LauncherTaskbarUIController;
 import com.android.launcher3.taskbar.TaskbarManager;
 import com.android.launcher3.taskbar.TaskbarUIController;
@@ -158,6 +164,7 @@ import com.android.launcher3.util.DisplayController;
 import com.android.launcher3.util.IntSet;
 import com.android.launcher3.util.NavigationMode;
 import com.android.launcher3.util.ObjectWrapper;
+import com.android.launcher3.util.PackageManagerHelper;
 import com.android.launcher3.util.PendingRequestArgs;
 import com.android.launcher3.util.PendingSplitSelectInfo;
 import com.android.launcher3.util.RunnableList;
@@ -187,6 +194,7 @@ import com.android.quickstep.util.TISBindHelper;
 import com.android.quickstep.util.unfold.LauncherUnfoldTransitionController;
 import com.android.quickstep.util.unfold.ProxyUnfoldTransitionProvider;
 import com.android.quickstep.views.FloatingTaskView;
+import com.android.quickstep.views.MemInfoView;
 import com.android.quickstep.views.OverviewActionsView;
 import com.android.quickstep.views.RecentsView;
 import com.android.quickstep.views.RecentsViewContainer;
@@ -267,9 +275,32 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
 
     private final OverviewChangeListener mOverviewChangeListener = this::onOverviewTargetChanged;
 
+    private MemInfoView mMemInfoView;
+
+    @Override
+    public void onWorkspaceDoubleTap() {
+        SystemUiProxy.INSTANCE.get(this).onKeyEvent(KeyEvent.KEYCODE_SLEEP);
+    }
+
     public static QuickstepLauncher getLauncher(Context context) {
         return fromContext(context);
     }
+
+    private StateListener noStatusBarStateListener = new StateManager.StateListener<LauncherState>() {
+        @Override
+        public void onStateTransitionStart(LauncherState toState) {
+            if (toState == OVERVIEW) {
+                getWindow().getDecorView().getWindowInsetsController().show(WindowInsetsCompat.Type.statusBars());
+            }
+        }
+
+        @Override
+        public void onStateTransitionComplete(LauncherState finalState) {
+            if (finalState != OVERVIEW) {
+                getWindow().getDecorView().getWindowInsetsController().hide(WindowInsetsCompat.Type.statusBars());
+            }
+        }
+    };
 
     @Override
     protected LauncherOverlayManager getDefaultOverlay() {
@@ -281,6 +312,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         super.setupViews();
 
         mActionsView = findViewById(R.id.overview_actions_view);
+        mMemInfoView = findViewById(R.id.meminfo);
         RecentsView<?,?> overviewPanel = getOverviewPanel();
         SystemUiProxy systemUiProxy = SystemUiProxy.INSTANCE.get(this);
         mSplitSelectStateController =
@@ -295,13 +327,15 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
                     getDepthController());
         }
         overviewPanel.init(mActionsView, mSplitSelectStateController,
-                mDesktopRecentsTransitionController);
+                mDesktopRecentsTransitionController, mMemInfoView);
         mSplitWithKeyboardShortcutController = new SplitWithKeyboardShortcutController(this,
                 mSplitSelectStateController, deviceState);
         mSplitToWorkspaceController = new SplitToWorkspaceController(this,
                 mSplitSelectStateController);
         mActionsView.updateDimension(getDeviceProfile(), overviewPanel.getLastComputedTaskSize());
         mActionsView.updateVerticalMargin(DisplayController.getNavigationMode(this));
+        mMemInfoView.setDp(getDeviceProfile());
+        mMemInfoView.updateVerticalMargin(DisplayController.getNavigationMode(this));
 
         mAppTransitionManager = buildAppTransitionManager();
         mAppTransitionManager.registerRemoteAnimations();
@@ -318,6 +352,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         getWorkspace().addOverlayCallback(progress ->
                 onTaskbarInAppDisplayProgressUpdate(progress, MINUS_ONE_PAGE_PROGRESS_INDEX));
         addBackAnimationCallback(mSplitSelectStateController.getSplitBackHandler());
+
     }
 
     @Override
@@ -461,7 +496,9 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         List<SystemShortcut.Factory> shortcuts = new ArrayList(Arrays.asList(
                 APP_INFO, WellbeingModel.SHORTCUT_FACTORY, mHotseatPredictionController));
         shortcuts.addAll(getSplitShortcuts());
+        shortcuts.add(UNINSTALL);
         shortcuts.add(WIDGETS);
+        shortcuts.add(KILL_APP);
         shortcuts.add(INSTALL);
         if (Flags.enablePrivateSpaceInstallShortcut()) {
             shortcuts.add(PRIVATE_PROFILE_INSTALL);
@@ -543,6 +580,9 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
 
     @Override
     public void onDestroy() {
+        if (!Utilities.showStatusbarEnabled(getApplicationContext())) {
+            getStateManager().removeStateListener(noStatusBarStateListener);
+        }
         if (mAppTransitionManager != null) {
             mAppTransitionManager.onActivityDestroyed();
         }
@@ -695,6 +735,9 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         mViewCapture = ViewCaptureFactory.getInstance(this).startCapture(getWindow());
         getWindow().addPrivateFlags(PRIVATE_FLAG_OPTIMIZE_MEASURE);
         QuickstepOnboardingPrefs.setup(this);
+        if (!Utilities.showStatusbarEnabled(getApplicationContext())) {
+            getStateManager().addStateListener(noStatusBarStateListener);
+        }
         View.setTraceLayoutSteps(TRACE_LAYOUTS);
         View.setTracedRequestLayoutClassClass(TRACE_RELAYOUT_CLASS);
         OverviewComponentObserver.INSTANCE.get(this)
@@ -1173,6 +1216,10 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         return mActionsView;
     }
 
+    public MemInfoView getMemInfoView () {
+        return mMemInfoView;
+    }
+
     @Override
     protected void closeOpenViews(boolean animate) {
         super.closeOpenViews(animate);
@@ -1286,6 +1333,9 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
             getDragLayer().recreateControllers();
             if (mActionsView != null) {
                 mActionsView.updateVerticalMargin(info.getNavigationMode());
+            }
+            if (mMemInfoView != null) {
+                mMemInfoView.updateVerticalMargin(info.getNavigationMode());
             }
         }
     }
@@ -1536,4 +1586,5 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
     public void setCanShowAllAppsEducationView(boolean canShowAllAppsEducationView) {
         mCanShowAllAppsEducationView = canShowAllAppsEducationView;
     }
+
 }

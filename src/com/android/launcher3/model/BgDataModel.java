@@ -17,7 +17,6 @@ package com.android.launcher3.model;
 
 import static android.content.pm.LauncherApps.ShortcutQuery.FLAG_GET_KEY_FIELDS_ONLY;
 
-import static com.android.launcher3.BuildConfig.QSB_ON_FIRST_SCREEN;
 import static com.android.launcher3.BuildConfig.WIDGETS_ENABLED;
 import static com.android.launcher3.Flags.enableSmartspaceRemovalToggle;
 import static com.android.launcher3.Utilities.SHOULD_SHOW_FIRST_PAGE_WIDGET;
@@ -137,8 +136,7 @@ public class BgDataModel {
      * Load id for which the callbacks were successfully bound
      */
     public int lastLoadId = -1;
-    public boolean isFirstPagePinnedItemEnabled = QSB_ON_FIRST_SCREEN
-            && !enableSmartspaceRemovalToggle();
+    public boolean isFirstPagePinnedItemEnabled = FeatureFlags.USE_QUICKSPACE_VIEW;
 
     /**
      * Clears all the data
@@ -162,8 +160,7 @@ public class BgDataModel {
                 screenSet.add(item.screenId);
             }
         }
-        if ((FeatureFlags.QSB_ON_FIRST_SCREEN
-                && !SHOULD_SHOW_FIRST_PAGE_WIDGET)
+        if (FeatureFlags.USE_QUICKSPACE_VIEW
                 || screenSet.isEmpty()) {
             screenSet.add(Workspace.FIRST_SCREEN_ID);
         }
@@ -494,6 +491,8 @@ public class BgDataModel {
         int FLAG_WORK_PROFILE_QUIET_MODE_ENABLED = 1 << 3;
         // If quiet mode is enabled for private profile user
         int FLAG_PRIVATE_PROFILE_QUIET_MODE_ENABLED = 1 << 4;
+        // If user has more than one work profile
+        int FLAG_HAS_MULTIPLE_PROFILES = 1 << 5;
 
         /**
          * Returns an IntSet of page ids to bind first, synchronously if possible

@@ -35,6 +35,7 @@ import androidx.annotation.Nullable;
 
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.Launcher;
+import com.android.launcher3.LauncherAppState;
 import com.android.launcher3.LauncherState;
 import com.android.launcher3.config.FeatureFlags;
 import com.android.launcher3.desktop.DesktopRecentsTransitionController;
@@ -64,6 +65,14 @@ import kotlin.Unit;
 public class LauncherRecentsView extends RecentsView<QuickstepLauncher, LauncherState>
         implements StateListener<LauncherState> {
 
+    private final Runnable mCheckPendingRestart = () -> {
+        if (!mContainer.isDestroyed() && mContainer.hasBeenResumed()
+                && getStateManager().getState() == NORMAL && !getStateManager().isInTransition()
+                && !isGestureActive() && getRecentsAnimationController() == null) {
+            LauncherAppState.INSTANCE.executeIfCreated(app -> app.checkIfRestartNeeded());
+        }
+    };
+
     public LauncherRecentsView(Context context) {
         this(context, null);
     }
@@ -80,8 +89,9 @@ public class LauncherRecentsView extends RecentsView<QuickstepLauncher, Launcher
     @Override
     public void init(OverviewActionsView actionsView,
             SplitSelectStateController splitPlaceholderView,
-            @Nullable DesktopRecentsTransitionController desktopRecentsTransitionController) {
-        super.init(actionsView, splitPlaceholderView, desktopRecentsTransitionController);
+            @Nullable DesktopRecentsTransitionController desktopRecentsTransitionController,
+            MemInfoView memInfoView) {
+        super.init(actionsView, splitPlaceholderView, desktopRecentsTransitionController, memInfoView);
         setContentAlpha(0);
     }
 
@@ -189,6 +199,19 @@ public class LauncherRecentsView extends RecentsView<QuickstepLauncher, Launcher
             runActionOnRemoteHandles(remoteTargetHandle ->
                     remoteTargetHandle.getTaskViewSimulator().setDrawsBelowRecents(true));
         }
+        schedulePendingRestartCheck();
+    }
+
+    @Override
+    public void onRecentsAnimationComplete() {
+        super.onRecentsAnimationComplete();
+        schedulePendingRestartCheck();
+    }
+
+    private void schedulePendingRestartCheck() {
+        // Let state and remote-animation cleanup finish before restarting the process.
+        removeCallbacks(mCheckPendingRestart);
+        post(mCheckPendingRestart);
     }
 
     @Override
@@ -297,5 +320,6 @@ public class LauncherRecentsView extends RecentsView<QuickstepLauncher, Launcher
             SystemUiProxy.INSTANCE.get(mContainer).showDesktopApps(mContainer.getDisplayId(),
                     null /* transition */);
         }
+        schedulePendingRestartCheck();
     }
 }

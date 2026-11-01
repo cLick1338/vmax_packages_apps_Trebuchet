@@ -30,7 +30,6 @@ import static com.android.launcher3.AbstractFloatingView.getTopOpenViewWithType;
 import static com.android.launcher3.Flags.enableAddAppWidgetViaConfigActivityV2;
 import static com.android.launcher3.Flags.enableSmartspaceRemovalToggle;
 import static com.android.launcher3.Flags.enableWorkspaceInflation;
-import static com.android.launcher3.InvariantDeviceProfile.KEY_DRAWER_OPEN_KEYBOARD;
 import static com.android.launcher3.LauncherAnimUtils.HOTSEAT_SCALE_PROPERTY_FACTORY;
 import static com.android.launcher3.LauncherAnimUtils.SCALE_INDEX_WIDGET_TRANSITION;
 import static com.android.launcher3.LauncherAnimUtils.SPRING_LOADED_EXIT_DELAY;
@@ -96,6 +95,7 @@ import static com.android.launcher3.model.ItemInstallQueue.FLAG_ACTIVITY_PAUSED;
 import static com.android.launcher3.model.ItemInstallQueue.FLAG_DRAG_AND_DROP;
 import static com.android.launcher3.popup.SystemShortcut.APP_INFO;
 import static com.android.launcher3.popup.SystemShortcut.INSTALL;
+import static com.android.launcher3.popup.SystemShortcut.UNINSTALL;
 import static com.android.launcher3.popup.SystemShortcut.WIDGETS;
 import static com.android.launcher3.states.RotationHelper.REQUEST_LOCK;
 import static com.android.launcher3.states.RotationHelper.REQUEST_NONE;
@@ -191,7 +191,6 @@ import com.android.launcher3.folder.Folder;
 import com.android.launcher3.folder.FolderIcon;
 import com.android.launcher3.icons.IconCache;
 import com.android.launcher3.keyboard.ViewGroupFocusHelper;
-import com.android.launcher3.lineage.LineageUtils;
 import com.android.launcher3.logger.LauncherAtom;
 import com.android.launcher3.logger.LauncherAtom.ContainerInfo;
 import com.android.launcher3.logger.LauncherAtom.WorkspaceContainer;
@@ -218,6 +217,7 @@ import com.android.launcher3.pm.PinRequestHelper;
 import com.android.launcher3.popup.ArrowPopup;
 import com.android.launcher3.popup.PopupDataProvider;
 import com.android.launcher3.popup.SystemShortcut;
+import com.android.launcher3.quickspace.QuickSpaceView;
 import com.android.launcher3.statemanager.StateManager;
 import com.android.launcher3.statemanager.StateManager.StateHandler;
 import com.android.launcher3.statemanager.StatefulActivity;
@@ -424,6 +424,13 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     private final SettingsCache.OnChangeListener mNaturalScrollingChangedListener =
             enabled -> mIsNaturalScrollingEnabled = enabled;
+
+    private boolean mWasImeOpened = false;
+
+    // QuickSpace
+    private QuickSpaceView mQuickSpace;
+
+    public void onWorkspaceDoubleTap() { }
 
     public static Launcher getLauncher(Context context) {
         return fromContext(context);
@@ -1105,6 +1112,9 @@ public class Launcher extends StatefulActivity<LauncherState>
         } else {
             mOverlayManager.onActivityStopped();
         }
+        if (mQuickSpace != null) {
+            mQuickSpace.onPause();
+        }
         hideKeyboard();
         logStopAndResume(false /* isResume */);
         mAppWidgetHolder.setActivityStarted(false);
@@ -1295,9 +1305,6 @@ public class Launcher extends StatefulActivity<LauncherState>
             getAppsView().reset(false);
             getAllAppsExitEvent().ifPresent(getStatsLogManager().logger()::log);
             mAllAppsSessionLogId = null;
-        } else if (ALL_APPS.equals(state)
-                && mSharedPrefs.getBoolean(KEY_DRAWER_OPEN_KEYBOARD, false)) {
-            getAppsView().getSearchUiManager().focusSearchField();
         }
 
         // Set screen title for Talkback
@@ -1315,6 +1322,10 @@ public class Launcher extends StatefulActivity<LauncherState>
     protected void onResume() {
         TraceHelper.INSTANCE.beginSection(ON_RESUME_EVT);
         super.onResume();
+
+        if (mQuickSpace != null) {
+            mQuickSpace.onResume();
+        }
 
         if (mDeferOverlayCallbacks) {
             scheduleDeferredCheck();
@@ -1338,6 +1349,9 @@ public class Launcher extends StatefulActivity<LauncherState>
 
         if (!mDeferOverlayCallbacks) {
             mOverlayManager.onActivityPaused();
+        }
+        if (mQuickSpace != null) {
+            mQuickSpace.onPause();
         }
         mAppWidgetHolder.setActivityResumed(false);
     }
@@ -1397,6 +1411,11 @@ public class Launcher extends StatefulActivity<LauncherState>
         mHotseat = findViewById(R.id.hotseat);
         mHotseat.setWorkspace(mWorkspace);
 
+        if (Utilities.isHotseatBgEnabled(this)) {
+            mHotseat.setBackgroundResource(R.drawable.bkg_appseat);
+            mHotseat.getBackground().setAlpha(Utilities.getHotseatOpacity(this) * 255 / 100);
+        }
+
         // Setup the drag layer
         mDragLayer.setup(mDragController, mWorkspace);
 
@@ -1404,9 +1423,7 @@ public class Launcher extends StatefulActivity<LauncherState>
         // Until the workspace is bound, ensure that we keep the wallpaper offset locked to the
         // default state, otherwise we will update to the wrong offsets in RTL
         mWorkspace.lockWallpaperToDefaultPage();
-        if (!enableSmartspaceRemovalToggle()) {
-            mWorkspace.bindAndInitFirstWorkspaceScreen();
-        }
+        mWorkspace.bindAndInitFirstWorkspaceScreen();
         mDragController.addDragListener(mWorkspace);
 
         // Get the search/delete/uninstall bar
@@ -1418,6 +1435,12 @@ public class Launcher extends StatefulActivity<LauncherState>
 
         // Setup Scrim
         mScrimView = findViewById(R.id.scrim_view);
+
+        // QuickSpace
+        mQuickSpace = findViewById(R.id.reserved_container_workspace);
+        if (!Utilities.showQuickspace(this) && mQuickSpace != null) {
+            mQuickSpace.setVisibility(View.GONE);
+        }
 
         // Setup the drag controller (drop targets have to be added in reverse order in priority)
         mDropTargetBar.setup(mDragController);
@@ -1828,6 +1851,10 @@ public class Launcher extends StatefulActivity<LauncherState>
         getRootView().getViewTreeObserver().removeOnPreDrawListener(mOnInitialBindListener);
         mOverlayManager.onActivityDestroyed();
         PillColorProvider.getInstance(mWorkspace.getContext()).unregisterObserver();
+
+        if (mQuickSpace != null) {
+            mQuickSpace.onDestroy();
+        }
     }
 
     public LauncherAccessibilityDelegate getAccessibilityDelegate() {
@@ -2188,7 +2215,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     }
 
     public void startActivitySafelyAuth(View v, Intent intent, ItemInfo item) {
-        LineageUtils.showLockScreen(this, getString(R.string.trust_apps_manager_name), () -> {
+        Utilities.showLockScreen(this, getString(R.string.trust_apps_manager_name), () -> {
             startActivitySafely(v, intent, item);
         });
     }
@@ -2922,7 +2949,18 @@ public class Launcher extends StatefulActivity<LauncherState>
      * @param progress Transition progress from 0 to 1; where 0 => home and 1 => all apps.
      */
     public void onAllAppsTransition(float progress) {
-        // No-Op
+        if (progress == 1f && !mWasImeOpened &&
+                Utilities.enableAutoIme(mWorkspace.getContext())) {
+            ExtendedEditText editText = mAppsView.getSearchUiManager().getEditText();
+            if (editText == null) return;
+            editText.showKeyboard();
+            mWasImeOpened = true;
+            return;
+        }
+        if (progress == 0 && mAppsView != null) {
+            hideKeyboard();
+        }
+        mWasImeOpened = false;
     }
 
     /**
@@ -3159,7 +3197,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     }
 
     public Stream<SystemShortcut.Factory> getSupportedShortcuts() {
-        return Stream.of(APP_INFO, WIDGETS, INSTALL);
+        return Stream.of(APP_INFO, WIDGETS, INSTALL, UNINSTALL);
     }
 
     /**

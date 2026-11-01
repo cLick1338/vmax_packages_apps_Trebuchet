@@ -62,6 +62,7 @@ public class AllAppsSearchBarController
         mLauncher = launcher;
 
         mInput = input;
+        mInput.setFocusableInTouchMode(true);
         mInput.addTextChangedListener(this);
         mInput.setOnEditorActionListener(this);
         mInput.setOnBackKeyListener(this);
@@ -126,8 +127,14 @@ public class AllAppsSearchBarController
             } else {
                 Log.i(TAG, "User tapped ime search button");
             }
+            // Skip if the query is empty
+            String query = v.getText().toString();
+            if (query.isEmpty()) {
+                return false;
+            }
+
             // selectFocusedView should return SearchTargetEvent that is passed onto onClick
-            return mLauncher.getAppsView().getMainAdapterProvider().launchHighlightedItem();
+            return mLauncher.getAppsView().getMainAdapterProvider().performGoogleSearch(v, query);
         }
         return false;
     }

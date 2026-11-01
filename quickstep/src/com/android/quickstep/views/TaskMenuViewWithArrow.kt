@@ -162,7 +162,6 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
         this.alignedOptionIndex = alignedOptionIndex
         this.onClosedCallback = onClosedCallback
         if (!populateMenu()) return false
-        addScrim()
         show()
         return true
     }
@@ -198,7 +197,7 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
 
         // Add the spaces between items
         val divider = ShapeDrawable(RectShape())
-        divider.paint.color = resources.getColor(android.R.color.transparent)
+        divider.paint.color = resources.getColor(android.R.color.transparent, /* theme= */ null)
         val dividerSpacing = resources.getDimension(R.dimen.task_menu_spacing).toInt()
         optionLayout.showDividers = SHOW_DIVIDER_MIDDLE
 

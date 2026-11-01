@@ -1,5 +1,7 @@
 package com.android.launcher3.popup;
 
+import static com.android.launcher3.LauncherSettings.Favorites.ITEM_TYPE_APPLICATION;
+import static com.android.launcher3.LauncherSettings.Favorites.ITEM_TYPE_TASK;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_DISMISS_PREDICTION_UNDO;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_PRIVATE_SPACE_INSTALL_SYSTEM_SHORTCUT_TAP;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_PRIVATE_SPACE_UNINSTALL_SYSTEM_SHORTCUT_TAP;
@@ -8,18 +10,28 @@ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCH
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_SYSTEM_SHORTCUT_WIDGETS_TAP;
 import static com.android.launcher3.widget.picker.model.data.WidgetPickerDataUtils.findAllWidgetsForPackageUser;
 
+import android.app.ActivityManagerNative;
+import android.app.IActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.LauncherActivityInfo;
+import android.content.pm.LauncherApps;
 import android.content.pm.ShortcutInfo;
 import android.graphics.Rect;
+import android.net.Uri;
 import android.os.Process;
+import android.os.RemoteException;
 import android.os.UserHandle;
 import android.util.Log;
+import android.view.InflateException;
 import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
+import android.os.UserHandle;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -27,16 +39,19 @@ import androidx.annotation.Nullable;
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.AbstractFloatingViewHelper;
 import com.android.launcher3.Flags;
+import com.android.launcher3.Launcher;
 import com.android.launcher3.LauncherSettings;
 import com.android.launcher3.R;
 import com.android.launcher3.SecondaryDropTarget;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.allapps.PrivateProfileManager;
+import com.android.launcher3.customization.InfoBottomSheet;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.model.data.WorkspaceItemInfo;
 import com.android.launcher3.pm.UserCache;
 import com.android.launcher3.util.ActivityOptionsWrapper;
 import com.android.launcher3.util.ApiWrapper;
+import com.android.launcher3.util.ApplicationInfoWrapper;
 import com.android.launcher3.util.ComponentKey;
 import com.android.launcher3.util.InstantAppResolver;
 import com.android.launcher3.util.PackageManagerHelper;
@@ -46,6 +61,7 @@ import com.android.launcher3.views.Snackbar;
 import com.android.launcher3.widget.WidgetsBottomSheet;
 import com.android.launcher3.widget.picker.model.data.WidgetPickerData;
 
+import java.net.URISyntaxException;
 import java.util.Arrays;
 
 /**
@@ -187,12 +203,38 @@ public abstract class SystemShortcut<T extends ActivityContext> extends ItemInfo
 
         @Override
         public void onClick(View view) {
-            Rect sourceBounds = Utilities.getViewBounds(view);
+            dismissTaskMenuView();
             ActivityOptionsWrapper options = mTarget.getActivityLaunchOptions(view, mItemInfo);
-            // Dismiss the taskMenu when the app launch animation is complete
-            options.onEndCallback.add(this::dismissTaskMenuView);
-            PackageManagerHelper.startDetailsActivityForInfo(view.getContext(), mItemInfo,
-                    sourceBounds, options.toBundle());
+            Rect sourceBounds = Utilities.getViewBounds(view);
+
+            boolean fromRecents = (mItemInfo.itemType == ITEM_TYPE_TASK);
+            if (!fromRecents) {
+                if (mTarget instanceof Launcher) {
+                    fromRecents = ((Launcher) mTarget)
+                            .getStateManager()
+                            .getState()
+                            .isRecentsViewVisible;
+                } else {
+                    fromRecents = true;
+                }
+            }
+
+            if (fromRecents) {
+                PackageManagerHelper.startDetailsActivityForInfo(view.getContext(), mItemInfo,
+                        sourceBounds, options.toBundle());
+            } else {
+                try {
+                    InfoBottomSheet cbs = (InfoBottomSheet) mTarget.getLayoutInflater().inflate(
+                            R.layout.app_info_bottom_sheet,
+                            mTarget.getDragLayer(),
+                            false);
+                    cbs.configureBottomSheet(sourceBounds, view.getContext());
+                    cbs.populateAndShow(mItemInfo);
+                } catch (InflateException e) {
+                    PackageManagerHelper.startDetailsActivityForInfo(view.getContext(), mItemInfo,
+                            sourceBounds, options.toBundle());
+                }
+            }
             mTarget.getStatsLogManager().logger().withItemInfo(mItemInfo)
                     .log(LAUNCHER_SYSTEM_SHORTCUT_APP_INFO_TAP);
         }
@@ -393,6 +435,91 @@ public abstract class SystemShortcut<T extends ActivityContext> extends ItemInfo
                     .logger()
                     .withItemInfo(mItemInfo)
                     .log(LAUNCHER_PRIVATE_SPACE_UNINSTALL_SYSTEM_SHORTCUT_TAP);
+        }
+    }
+
+    public static final Factory<ActivityContext> UNINSTALL = (activity, itemInfo, originalView) ->
+            itemInfo.getTargetComponent() == null ||
+                    PackageManagerHelper.isSystemApp((Context) activity,
+                    itemInfo.getTargetComponent().getPackageName())
+                    ? null : new UnInstall(activity, itemInfo, originalView);
+
+    public static class UnInstall<T extends ActivityContext> extends SystemShortcut<T> {
+
+        public UnInstall(T target, ItemInfo itemInfo, View originalView) {
+            super(R.drawable.ic_uninstall_no_shadow, R.string.uninstall_drop_target_label,
+                    target, itemInfo, originalView);
+        }
+
+        /**
+         * @return the component name that should be uninstalled or null.
+         */
+        private ComponentName getUninstallTarget(ItemInfo item, Context context) {
+            Intent intent = null;
+            UserHandle user = null;
+            if (item != null &&
+                    (item.itemType == ITEM_TYPE_APPLICATION || item.itemType == ITEM_TYPE_TASK)) {
+                intent = item.getIntent();
+                user = item.user;
+            }
+            if (intent != null) {
+                LauncherActivityInfo info = context.getSystemService(LauncherApps.class)
+                        .resolveActivity(intent, user);
+                if (info != null
+                        && (info.getApplicationInfo().flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+                    return info.getComponentName();
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public void onClick(View view) {
+            ComponentName cn = getUninstallTarget(mItemInfo, view.getContext());
+            if (cn == null) {
+                // System applications cannot be installed. For now, show a toast explaining that.
+                // We may give them the option of disabling apps this way.
+                Toast.makeText(view.getContext(), R.string.uninstall_system_app_text, Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            try {
+                Intent intent = Intent.parseUri(view.getContext().getString(R.string.delete_package_intent), 0)
+                    .setData(Uri.fromParts("package", cn.getPackageName(), cn.getClassName()))
+                    .putExtra(Intent.EXTRA_USER, mItemInfo.user);
+                ((Context) mTarget).startActivity(intent);
+                AbstractFloatingView.closeAllOpenViews(mTarget);
+            } catch (URISyntaxException e) {
+                // Do nothing.
+            }
+        }
+    }
+
+    public static final Factory<ActivityContext> KILL_APP = (activity, itemInfo, originalView) -> {
+        String packageName = itemInfo.getTargetComponent().getPackageName();
+        return packageName == null ? null : new KillApp(activity, itemInfo, originalView);
+    };
+
+    public static class KillApp extends SystemShortcut<ActivityContext> {
+        private final String mPackageName;
+
+        public KillApp(ActivityContext target, ItemInfo itemInfo, View originalView) {
+            super(R.drawable.ic_kill_app, R.string.recent_task_option_kill_app,
+                    target, itemInfo, originalView);
+            mPackageName = itemInfo.getTargetComponent().getPackageName();
+        }
+
+        @Override
+        public void onClick(View view) {
+            if (mPackageName != null) {
+                IActivityManager iam = ActivityManagerNative.getDefault();
+                try {
+                    iam.forceStopPackage(mPackageName, mItemInfo.user.getIdentifier());
+                    Toast appKilled = Toast.makeText(view.getContext(), R.string.recents_app_killed, Toast.LENGTH_SHORT);
+                    appKilled.show();
+                    AbstractFloatingView.closeAllOpenViews(mTarget);
+                } catch (RemoteException e) { }
+            }
         }
     }
 

@@ -174,7 +174,7 @@ public class SwipePipToHomeAnimator extends RectFSpringAnim {
             // the cleanup.
             mPipContentOverlay = new PipContentOverlay.PipAppIconOverlay(view.getContext(),
                     mAppBounds, mDestinationBounds,
-                    new IconProvider(context).getIcon(mActivityInfo), appIconSizePx);
+                    com.android.launcher3.icons.ThirdPartyIconProvider.INSTANCE.get(context).getIcon(mActivityInfo), appIconSizePx);
             final SurfaceControl.Transaction tx = new SurfaceControl.Transaction();
             mPipContentOverlay.attach(tx, mLeash);
             Log.d(TAG, getContentOverlay() + " is created: " + reasonForCreateOverlay);

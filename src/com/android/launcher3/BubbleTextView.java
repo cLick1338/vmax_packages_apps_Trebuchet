@@ -77,6 +77,7 @@ import com.android.launcher3.dot.DotInfo;
 import com.android.launcher3.dragndrop.DragOptions.PreDragCondition;
 import com.android.launcher3.dragndrop.DraggableView;
 import com.android.launcher3.folder.FolderIcon;
+import com.android.launcher3.graphics.DrawableFactory;
 import com.android.launcher3.graphics.IconShape;
 import com.android.launcher3.graphics.PreloadIconDrawable;
 import com.android.launcher3.icons.DotRenderer;
@@ -256,6 +257,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         mCenterVertically = a.getBoolean(R.styleable.BubbleTextView_centerVertically, false);
 
         SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        mShouldShowLabel = prefs.getBoolean(KEY_SHOW_DESKTOP_LABELS, true);
 
         mDisplay = a.getInteger(R.styleable.BubbleTextView_iconDisplay, DISPLAY_WORKSPACE);
         final int defaultIconSize;
@@ -264,9 +266,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
             setCompoundDrawablePadding(mDeviceProfile.iconDrawablePaddingPx);
             defaultIconSize = mDeviceProfile.iconSizePx;
             setCenterVertically(mDeviceProfile.iconCenterVertically);
-            mShouldShowLabel = prefs.getBoolean(KEY_SHOW_DESKTOP_LABELS, true);
-        } else if (mDisplay == DISPLAY_ALL_APPS || mDisplay == DISPLAY_PREDICTION_ROW
-                || mDisplay == DISPLAY_SEARCH_RESULT_APP_ROW) {
+        } else if (displayIsAppDrawer()) {
             setTextSize(TypedValue.COMPLEX_UNIT_PX, mDeviceProfile.allAppsIconTextSizePx);
             setCompoundDrawablePadding(mDeviceProfile.allAppsIconDrawablePaddingPx);
             defaultIconSize = mDeviceProfile.allAppsIconSizePx;
@@ -276,21 +276,18 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
             setTextSize(TypedValue.COMPLEX_UNIT_PX, mDeviceProfile.folderChildTextSizePx);
             setCompoundDrawablePadding(mDeviceProfile.folderChildDrawablePaddingPx);
             defaultIconSize = mDeviceProfile.folderChildIconSizePx;
-            mShouldShowLabel = prefs.getBoolean(KEY_SHOW_DESKTOP_LABELS, true);
         } else if (mDisplay == DISPLAY_SEARCH_RESULT) {
             setTextSize(TypedValue.COMPLEX_UNIT_PX, mDeviceProfile.allAppsIconTextSizePx);
             defaultIconSize = getResources().getDimensionPixelSize(R.dimen.search_row_icon_size);
-            mShouldShowLabel = prefs.getBoolean(KEY_SHOW_DESKTOP_LABELS, true);
         } else if (mDisplay == DISPLAY_SEARCH_RESULT_SMALL) {
             defaultIconSize = getResources().getDimensionPixelSize(
                     R.dimen.search_row_small_icon_size);
-            mShouldShowLabel = prefs.getBoolean(KEY_SHOW_DESKTOP_LABELS, true);
         } else if (mDisplay == DISPLAY_TASKBAR) {
             defaultIconSize = mDeviceProfile.taskbarIconSize;
         } else {
             // widget_selection or shortcut_popup
             defaultIconSize = mDeviceProfile.iconSizePx;
-            mShouldShowLabel = prefs.getBoolean(KEY_SHOW_DESKTOP_LABELS, true);
+            mShouldShowLabel = true;
         }
 
 
@@ -322,6 +319,12 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         setEllipsize(TruncateAt.END);
         setAccessibilityDelegate(mActivity.getAccessibilityDelegate());
         setTextAlpha(1f);
+    }
+
+    private boolean displayIsAppDrawer() {
+        return (mDisplay == DISPLAY_ALL_APPS
+                || mDisplay == DISPLAY_PREDICTION_ROW
+                || mDisplay == DISPLAY_SEARCH_RESULT_APP_ROW);
     }
 
     @Override
@@ -502,7 +505,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
     protected boolean shouldUseTheme() {
         return (mDisplay == DISPLAY_WORKSPACE || mDisplay == DISPLAY_FOLDER
                 || mDisplay == DISPLAY_TASKBAR
-                || (mThemeAllAppsIcons && mDisplay == DISPLAY_ALL_APPS))
+                || (mThemeAllAppsIcons && displayIsAppDrawer()))
                 && Themes.isThemedIconEnabled(getContext());
     }
 
@@ -510,9 +513,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
      * Only if actual text can be displayed in two line, the {@code true} value will be effective.
      */
     protected boolean shouldUseTwoLine() {
-        return isCurrentLanguageEnglish() && (mDisplay == DISPLAY_ALL_APPS
-                || mDisplay == DISPLAY_PREDICTION_ROW) && (Flags.enableTwolineToggle()
-                && LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE.get(getContext()));
+        return LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE.get(getContext());
     }
 
     protected boolean isCurrentLanguageEnglish() {
@@ -875,10 +876,10 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int height = MeasureSpec.getSize(heightMeasureSpec);
-        if (mCenterVertically) {
+        if (mCenterVertically || !mShouldShowLabel) {
             Paint.FontMetrics fm = getPaint().getFontMetrics();
-            int cellHeightPx = mIconSize + getCompoundDrawablePadding() +
-                    (int) Math.ceil(fm.bottom - fm.top);
+            int textHeight = mShouldShowLabel ? (int) Math.ceil(fm.bottom - fm.top) : 0;
+            int cellHeightPx = mIconSize + getCompoundDrawablePadding() + textHeight;
             setPadding(getPaddingLeft(), (height - cellHeightPx) / 2, getPaddingRight(),
                     getPaddingBottom());
         }
@@ -1192,7 +1193,8 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
 
         ItemInfoWithIcon info = (ItemInfoWithIcon) getTag();
         int progressLevel = info.getProgressLevel();
-        final PreloadIconDrawable preloadDrawable = newPendingIcon(getContext(), info);
+        final PreloadIconDrawable preloadDrawable = DrawableFactory.INSTANCE.get(getContext())
+                                                           .newPendingIcon(getContext(), info);
 
         preloadDrawable.setLevel(progressLevel);
         preloadDrawable.setIsDisabled(isIconDisabled(info));
@@ -1209,7 +1211,7 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
 
 
     public void applyDotState(ItemInfo itemInfo, boolean animate) {
-        if (mIcon instanceof FastBitmapDrawable) {
+        if (mIcon != null) {
             boolean wasDotted = mDotInfo != null;
             mDotInfo = mActivity.getDotInfoForItem(itemInfo);
             boolean isDotted = mDotInfo != null;

@@ -26,12 +26,14 @@ import static com.android.launcher3.util.SplitConfigurationOptions.STAGE_TYPE_MA
 import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
+import android.app.KeyguardManager;
 import android.app.Person;
 import android.app.WallpaperManager;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
+import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -47,15 +49,22 @@ import android.graphics.RectF;
 import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.hardware.biometrics.BiometricManager.Authenticators;
+import android.hardware.biometrics.BiometricPrompt;
+import android.icu.text.DateFormat;
+import android.icu.text.DisplayContext;
 import android.os.Build;
 import android.os.Build.VERSION_CODES;
+import android.os.CancellationSignal;
 import android.os.DeadObjectException;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.TransactionTooLargeException;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 import android.text.style.TtsSpan;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -66,6 +75,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.animation.Interpolator;
+import android.widget.Toast;
 
 import androidx.annotation.ChecksSdkIntAtLeast;
 import androidx.annotation.IntDef;
@@ -74,6 +84,8 @@ import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 import androidx.core.graphics.ColorUtils;
 
+import com.android.launcher3.LauncherModel;
+import com.android.launcher3.R;
 import com.android.launcher3.dragndrop.FolderAdaptiveIcon;
 import com.android.launcher3.graphics.TintedDrawableSpan;
 import com.android.launcher3.icons.BitmapInfo;
@@ -100,6 +112,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.Predicate;
 
+import static com.android.launcher3.util.Executors.MAIN_EXECUTOR;
+
 /**
  * Various utilities shared amongst the Launcher's classes.
  */
@@ -125,6 +139,8 @@ public final class Utilities {
     public static final boolean ATLEAST_V = Build.VERSION.SDK_INT
             >= VERSION_CODES.VANILLA_ICE_CREAM;
 
+    private static final long WAIT_BEFORE_RESTART = 100; // ms
+
     /**
      * Set on a motion event dispatched from the nav bar. See {@link MotionEvent#setEdgeFlags(int)}.
      */
@@ -148,6 +164,34 @@ public final class Utilities {
 
     @IntDef({TRANSLATE_UP, TRANSLATE_DOWN, TRANSLATE_LEFT, TRANSLATE_RIGHT})
     public @interface AdjustmentDirection{}
+
+    public static final String GSA_PACKAGE = "com.google.android.googlequicksearchbox";
+    public static final String LENS_ACTIVITY = "com.google.android.apps.search.lens.LensExportedActivity";
+    public static final String LENS_URI = "google://lens";
+    public static final String LENS_SHARE_ACTIVITY = "com.google.android.apps.search.lens.LensShareEntryPointActivity";
+
+    public static final String KEY_DOCK_SEARCH = "pref_dock_search";
+    public static final String KEY_DOCK_MUSIC_SEARCH = "pref_dock_music_search";
+    public static final String KEY_DOCK_THEME = "pref_dock_theme";
+    public static final String KEY_SEARCH_RADIUS = "pref_search_radius_size";
+    public static final String KEY_SHOW_HOTSEAT_BG = "pref_show_hotseat_bg";
+    public static final String KEY_HOTSEAT_OPACITY = "pref_hotseat_opacity";
+    public static final String KEY_ALLOW_WALLPAPER_ZOOMING = "pref_allow_wallpaper_zooming";
+    public static final String KEY_STATUS_BAR = "pref_show_statusbar";
+    public static final String KEY_RECENTS_MEMINFO = "pref_recents_meminfo";
+    public static final String KEY_SHORT_PARALLAX = "pref_short_parallax";
+    public static final String KEY_SINGLE_PAGE_CENTER = "pref_single_page_center";
+    public static final String KEY_DRAWER_SEARCH = "pref_drawer_search";
+    public static final String KEY_HOTSEAT_QSB_OPACITY = "pref_hotseat_qsb_opacity";
+    public static final String KEY_HOTSEAT_QSB_STROKE_WIDTH = "pref_hotseat_qsb_stroke_width";
+    public static final String KEY_AUTO_KEYABORD = "pref_drawer_open_keyboard";
+    public static final String KEY_DRAWER_SCROLLBAR = "pref_drawer_scrollbar";
+    public static final String DESKTOP_SHOW_QUICKSPACE = "pref_show_quickspace";
+    public static final String KEY_SHOW_ALT_QUICKSPACE = "pref_show_alt_quickspace";
+    public static final String KEY_SHOW_QUICKSPACE_NOWPLAYING = "pref_quickspace_np";
+    public static final String KEY_SHOW_QUICKSPACE_WEATHER = "pref_quickspace_weather";
+    public static final String KEY_SHOW_QUICKSPACE_WEATHER_CITY = "pref_quickspace_weather_city";
+    public static final String KEY_SHOW_QUICKSPACE_WEATHER_TEXT = "pref_quickspace_weather_text";
 
     /**
      * Returns true if theme is dark.
@@ -275,15 +319,17 @@ public final class Utilities {
     public static void mapCoordInSelfToDescendant(View descendant, View root, float[] coord) {
         sMatrix.reset();
         View v = descendant;
-        while(v != root) {
+        if (v != null) {
+            while (v != root) {
+                sMatrix.postTranslate(-v.getScrollX(), -v.getScrollY());
+                sMatrix.postConcat(v.getMatrix());
+                sMatrix.postTranslate(v.getLeft(), v.getTop());
+                v = (View) v.getParent();
+            }
             sMatrix.postTranslate(-v.getScrollX(), -v.getScrollY());
-            sMatrix.postConcat(v.getMatrix());
-            sMatrix.postTranslate(v.getLeft(), v.getTop());
-            v = (View) v.getParent();
+            sMatrix.invert(sInverseMatrix);
+            sInverseMatrix.mapPoints(coord);
         }
-        sMatrix.postTranslate(-v.getScrollX(), -v.getScrollY());
-        sMatrix.invert(sInverseMatrix);
-        sInverseMatrix.mapPoints(coord);
     }
 
     /**
@@ -641,8 +687,12 @@ public final class Utilities {
                     ((PendingAddShortcutInfo) info).getActivityInfo(context);
             mainIcon = activityInfo.getFullResIcon(appState.getIconCache());
         } else if (info.itemType == LauncherSettings.Favorites.ITEM_TYPE_APPLICATION) {
+            android.content.Intent intent = info.getIntent();
+            if (intent == null) {
+                return null;
+            }
             LauncherActivityInfo activityInfo = context.getSystemService(LauncherApps.class)
-                    .resolveActivity(info.getIntent(), info.user);
+                    .resolveActivity(intent, info.user);
             if (activityInfo == null) {
                 return null;
             }
@@ -676,7 +726,7 @@ public final class Utilities {
         if (mainIcon == null) {
             return null;
         }
-        AdaptiveIconDrawable result;
+        AdaptiveIconDrawable result = null;
         if (mainIcon instanceof AdaptiveIconDrawable aid) {
             result = aid;
         } else {
@@ -940,8 +990,198 @@ public final class Utilities {
         return null;
     }
 
+    public static void restart() {
+        MAIN_EXECUTOR.getHandler().postDelayed(() -> {
+            System.exit(0);
+        }, WAIT_BEFORE_RESTART);
+    }
+
+    public static String formatDateTime(Context context) {
+        String styleText;
+        DateFormat dateFormat;
+        if (useAlternativeQuickspaceUI(context)) {
+            styleText = context.getString(R.string.quickspace_date_format_minimalistic);
+        } else {
+            styleText = context.getString(R.string.quickspace_date_format);
+        }
+        dateFormat = DateFormat.getInstanceForSkeleton(styleText, Locale.getDefault());
+        dateFormat.setContext(DisplayContext.CAPITALIZATION_FOR_STANDALONE);
+        return dateFormat.format(System.currentTimeMillis());
+    }
+
     public static boolean isWorkspaceEditAllowed(Context context) {
         SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
         return !prefs.getBoolean(InvariantDeviceProfile.KEY_WORKSPACE_LOCK, false);
+    }
+
+    public static boolean isGSAEnabled(Context context) {
+        try {
+            return context.getPackageManager().getApplicationInfo(GSA_PACKAGE, 0).enabled;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Shows authentication screen to confirm credentials (pin, pattern or password) for the current
+     * user of the device.
+     *
+     * @param context The {@code Context} used to get {@code KeyguardManager} service
+     * @param title the {@code String} which will be shown as the pompt title
+     * @param successRunnable The {@code Runnable} which will be executed if the user does not setup
+     *                        device security or if lock screen is unlocked
+     */
+    public static void showLockScreen(Context context, String title, Runnable successRunnable) {
+        if (hasSecureKeyguard(context)) {
+            final BiometricPrompt.AuthenticationCallback authenticationCallback =
+                    new BiometricPrompt.AuthenticationCallback() {
+                        @Override
+                        public void onAuthenticationSucceeded(
+                                    BiometricPrompt.AuthenticationResult result) {
+                            successRunnable.run();
+                        }
+
+                        @Override
+                        public void onAuthenticationError(int errorCode, CharSequence errString) {
+                            //Do nothing
+                        }
+            };
+
+            final BiometricPrompt bp = new BiometricPrompt.Builder(context)
+                    .setTitle(title)
+                    .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG |
+                                              Authenticators.DEVICE_CREDENTIAL)
+                    .build();
+
+            final Handler handler = new Handler(Looper.getMainLooper());
+            bp.authenticate(new CancellationSignal(),
+                    runnable -> handler.post(runnable),
+                    authenticationCallback);
+        } else {
+            // Notify the user a secure keyguard is required for protected apps,
+            // but allow to set hidden apps
+            Toast.makeText(context, R.string.trust_apps_no_lock_error, Toast.LENGTH_LONG)
+                .show();
+            successRunnable.run();
+        }
+    }
+
+    public static boolean hasSecureKeyguard(Context context) {
+        final KeyguardManager keyguardManager = context.getSystemService(KeyguardManager.class);
+        return keyguardManager != null && keyguardManager.isKeyguardSecure();
+    }
+
+    public static boolean showQSB(Context context) {
+        return isGSAEnabled(context) && isQSBEnabled(context);
+    }
+
+    private static boolean isQSBEnabled(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_DOCK_SEARCH, true);
+    }
+
+    public static boolean isMusicSearchEnabled(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return isGSAEnabled(context) && prefs.getBoolean(KEY_DOCK_MUSIC_SEARCH, false);
+    }
+
+    public static boolean isThemedIconsEnabled(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_DOCK_THEME, false);
+    }
+
+    public static int getCornerRadius(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getInt(KEY_SEARCH_RADIUS, 100);
+    }
+
+    public static boolean isHotseatBgEnabled(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHOW_HOTSEAT_BG, false);
+    }
+
+    public static int getHotseatOpacity(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getInt(KEY_HOTSEAT_OPACITY, 40);
+    }
+
+    public static boolean canZoomWallpaper(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_ALLOW_WALLPAPER_ZOOMING, true);
+    }
+
+    public static boolean showStatusbarEnabled(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_STATUS_BAR, true);
+    }
+
+    public static boolean isShowMeminfo(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_RECENTS_MEMINFO, false);
+    }
+
+    public static boolean isShortParallax(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHORT_PARALLAX, false);
+    }
+
+    public static boolean isSinglePageCentered(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SINGLE_PAGE_CENTER, false);
+    }
+
+    public static boolean showSearch(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_DRAWER_SEARCH, true);
+    }
+
+    public static int getHotseatQsbOpacity(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getInt(KEY_HOTSEAT_QSB_OPACITY, 100);
+    }
+
+    public static int getHotseatQsbStrokeWidth(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getInt(KEY_HOTSEAT_QSB_STROKE_WIDTH, 0);
+    }
+
+    public static boolean enableAutoIme(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_AUTO_KEYABORD, false);
+    }
+
+    public static boolean showScrollbar(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_DRAWER_SCROLLBAR, true);
+    }
+
+    public static boolean showQuickspace(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(DESKTOP_SHOW_QUICKSPACE, true);
+    }
+
+    public static boolean useAlternativeQuickspaceUI(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHOW_ALT_QUICKSPACE, false);
+    }
+
+    public static boolean isQuickspaceNowPlaying(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHOW_QUICKSPACE_NOWPLAYING, true);
+    }
+
+    public static boolean isQuickspaceWeather(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHOW_QUICKSPACE_WEATHER, true);
+    }
+
+    public static boolean QuickSpaceShowCity(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHOW_QUICKSPACE_WEATHER_CITY, false);
+    }
+
+    public static boolean QuickSpaceShowWeatherText(Context context) {
+        SharedPreferences prefs = LauncherPrefs.getPrefs(context.getApplicationContext());
+        return prefs.getBoolean(KEY_SHOW_QUICKSPACE_WEATHER_TEXT, true);
     }
 }

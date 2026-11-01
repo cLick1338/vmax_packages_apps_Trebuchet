@@ -55,6 +55,7 @@ import androidx.annotation.XmlRes;
 import androidx.core.content.res.ResourcesCompat;
 
 import com.android.launcher3.config.FeatureFlags;
+import com.android.launcher3.customization.IconDatabase;
 import com.android.launcher3.icons.DotRenderer;
 import com.android.launcher3.logging.FileLog;
 import com.android.launcher3.model.DeviceGridState;
@@ -104,10 +105,11 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
     private static final float ICON_SIZE_DEFINED_IN_APP_DP = 48;
 
     public static final String KEY_ALLAPPS_THEMED_ICONS = "pref_allapps_themed_icons";
-    public static final String KEY_DRAWER_OPEN_KEYBOARD = "pref_drawer_open_keyboard";
     public static final String KEY_SHOW_DESKTOP_LABELS = "pref_desktop_show_labels";
     public static final String KEY_SHOW_DRAWER_LABELS = "pref_drawer_show_labels";
     public static final String KEY_WORKSPACE_LOCK = "pref_workspace_lock";
+    public static final String KEY_ICON_SIZE = "pref_custom_icon_size";
+    public static final String KEY_FONT_SIZE = "pref_custom_font_size";
 
     // Constants that affects the interpolation curve between statically defined device profile
     // buckets.
@@ -144,6 +146,7 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
     public int[] numFolderColumns;
     public float[] iconSize;
     public float[] iconTextSize;
+    public String iconPack;
     public int iconBitmapSize;
     public int fillResIconDpi;
     public @DeviceType int deviceType;
@@ -360,11 +363,24 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
+        if (key.equals(LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE.getKey())) {
+            onConfigChanged(mContext);
+            return;
+        }
         switch (key) {
+            case DeviceProfile.KEY_WIDGET_PADDING_HORIZONTAL:
+            case DeviceProfile.KEY_WIDGET_PADDING_VERTICAL:
+                onConfigChanged(mContext);
+                LauncherAppState.INSTANCE.executeIfCreated(
+                        app -> app.getModel().refreshAndBindWidgetsAndShortcuts(null));
+                break;
             case KEY_ALLAPPS_THEMED_ICONS:
-            case KEY_DRAWER_OPEN_KEYBOARD:
             case KEY_SHOW_DESKTOP_LABELS:
             case KEY_SHOW_DRAWER_LABELS:
+            case KEY_ICON_SIZE:
+            case KEY_FONT_SIZE:
+            case DeviceProfile.KEY_ROW_HEIGHT:
+            case IconDatabase.KEY_ICON_PACK:
                 onConfigChanged(mContext);
                 break;
         }
@@ -476,6 +492,7 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
         for (int i = 1; i < iconSize.length; i++) {
             maxIconSize = Math.max(maxIconSize, iconSize[i]);
         }
+        iconPack = IconDatabase.getGlobal(context);
         iconBitmapSize = ResourceUtils.pxFromDp(maxIconSize, metrics);
         fillResIconDpi = getLauncherIconDensity(iconBitmapSize);
 
@@ -585,7 +602,7 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
     private Object[] toModelState() {
         return new Object[]{
                 numColumns, numRows, numSearchContainerColumns, numDatabaseHotseatIcons,
-                iconBitmapSize, fillResIconDpi, numDatabaseAllAppsColumns, dbFile};
+                iconPack, iconBitmapSize, fillResIconDpi, numDatabaseAllAppsColumns, dbFile};
     }
 
     /** Updates IDP using the provided context. Notifies listeners of change. */
@@ -1318,6 +1335,11 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
 
             TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.ProfileDisplayOption);
 
+            float iconSizeModifier =
+                    (float) LauncherPrefs.getPrefs(context).getInt(KEY_ICON_SIZE, 100) / 100F;
+            float fontSizeModifier =
+                    (float) LauncherPrefs.getPrefs(context).getInt(KEY_FONT_SIZE, 100) / 100F;
+
             minWidthDps = a.getFloat(R.styleable.ProfileDisplayOption_minWidthDps, 0);
             minHeightDps = a.getFloat(R.styleable.ProfileDisplayOption_minHeightDps, 0);
 
@@ -1446,20 +1468,23 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
                     allAppsBorderSpaceTwoPanelLandscape);
             allAppsBorderSpaces[INDEX_TWO_PANEL_LANDSCAPE] = new PointF(x, y);
 
-            iconSizes[INDEX_DEFAULT] =
-                    a.getFloat(R.styleable.ProfileDisplayOption_iconImageSize, 0);
-            iconSizes[INDEX_LANDSCAPE] =
-                    a.getFloat(R.styleable.ProfileDisplayOption_iconSizeLandscape,
-                            iconSizes[INDEX_DEFAULT]);
-            iconSizes[INDEX_TWO_PANEL_PORTRAIT] =
-                    a.getFloat(R.styleable.ProfileDisplayOption_iconSizeTwoPanelPortrait,
-                            iconSizes[INDEX_DEFAULT]);
-            iconSizes[INDEX_TWO_PANEL_LANDSCAPE] =
-                    a.getFloat(R.styleable.ProfileDisplayOption_iconSizeTwoPanelLandscape,
-                            iconSizes[INDEX_DEFAULT]);
+            float baseIconSize = a.getFloat(R.styleable.ProfileDisplayOption_iconImageSize, 0);
 
-            allAppsIconSizes[INDEX_DEFAULT] = a.getFloat(
-                    R.styleable.ProfileDisplayOption_allAppsIconSize, iconSizes[INDEX_DEFAULT]);
+            iconSizes[INDEX_DEFAULT] = baseIconSize * iconSizeModifier;
+            iconSizes[INDEX_LANDSCAPE] = a.getFloat(
+                    R.styleable.ProfileDisplayOption_iconSizeLandscape,
+                    iconSizes[INDEX_DEFAULT]);
+            iconSizes[INDEX_TWO_PANEL_PORTRAIT] = a.getFloat(
+                    R.styleable.ProfileDisplayOption_iconSizeTwoPanelPortrait,
+                    iconSizes[INDEX_DEFAULT]);
+            iconSizes[INDEX_TWO_PANEL_LANDSCAPE] = a.getFloat(
+                    R.styleable.ProfileDisplayOption_iconSizeTwoPanelLandscape,
+                    iconSizes[INDEX_DEFAULT]);
+
+            float baseAllAppsIconSize = a.getFloat(R.styleable.ProfileDisplayOption_allAppsIconSize, 0);
+
+            allAppsIconSizes[INDEX_DEFAULT] = baseAllAppsIconSize == 0 ?
+                iconSizes[INDEX_DEFAULT] : baseAllAppsIconSize * iconSizeModifier;
             allAppsIconSizes[INDEX_LANDSCAPE] = a.getFloat(
                     R.styleable.ProfileDisplayOption_allAppsIconSizeLandscape,
                     allAppsIconSizes[INDEX_DEFAULT]);
@@ -1471,7 +1496,7 @@ public class InvariantDeviceProfile implements SafeCloseable, OnSharedPreference
                     allAppsIconSizes[INDEX_DEFAULT]);
 
             textSizes[INDEX_DEFAULT] =
-                    a.getFloat(R.styleable.ProfileDisplayOption_iconTextSize, 0);
+                    a.getFloat(R.styleable.ProfileDisplayOption_iconTextSize, 0) * fontSizeModifier;
             textSizes[INDEX_LANDSCAPE] =
                     a.getFloat(R.styleable.ProfileDisplayOption_iconTextSizeLandscape,
                             textSizes[INDEX_DEFAULT]);

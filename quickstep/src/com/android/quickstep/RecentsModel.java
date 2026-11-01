@@ -89,7 +89,7 @@ public class RecentsModel implements RecentTasksDataSource, IconChangeListener,
     private final TaskStackChangeListeners mTaskStackChangeListeners;
 
     private RecentsModel(Context context) {
-        this(context, new IconProvider(context));
+        this(context, com.android.launcher3.icons.ThirdPartyIconProvider.INSTANCE.get(context));
     }
 
     private RecentsModel(Context context, IconProvider iconProvider) {

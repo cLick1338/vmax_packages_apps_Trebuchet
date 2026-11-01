@@ -172,6 +172,10 @@ public final class TaskViewUtils {
         boolean isQuickSwitch = v.isEndQuickSwitchCuj();
         v.setEndQuickSwitchCuj(false);
 
+        if (recentsView == null) {
+            return;
+        }
+
         final RemoteAnimationTargets targets =
                 new RemoteAnimationTargets(appTargets, wallpaperTargets, nonAppTargets,
                         MODE_OPENING);
@@ -603,6 +607,9 @@ public final class TaskViewUtils {
         boolean skipLauncherChanges = !launcherClosing;
 
         TaskView taskView = findTaskViewToLaunch(recentsView, v, appTargets);
+        if (taskView == null) {
+            return;
+        }
         PendingAnimation pa = new PendingAnimation(RECENTS_LAUNCH_DURATION);
         createRecentsWindowAnimator(recentsView, taskView, skipLauncherChanges, appTargets,
                 wallpaperTargets, nonAppTargets, depthController, pa);

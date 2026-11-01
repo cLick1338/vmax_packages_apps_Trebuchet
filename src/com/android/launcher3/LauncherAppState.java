@@ -27,6 +27,8 @@ import static com.android.launcher3.LauncherPrefs.ICON_STATE;
 import static com.android.launcher3.LauncherPrefs.THEMED_ICONS;
 import static com.android.launcher3.model.DeviceGridState.KEY_DB_FILE;
 import static com.android.launcher3.model.LoaderTask.SMARTSPACE_ON_HOME_SCREEN;
+import static com.android.launcher3.util.DisplayController.CHANGE_OVERLAYS;
+import static com.android.launcher3.util.DisplayController.CHANGE_UI_MODE;
 import static com.android.launcher3.util.Executors.MODEL_EXECUTOR;
 import static com.android.launcher3.util.Executors.UI_HELPER_EXECUTOR;
 import static com.android.launcher3.util.SettingsCache.NOTIFICATION_BADGING_URI;
@@ -42,6 +44,7 @@ import android.content.pm.LauncherApps;
 import android.content.pm.LauncherApps.ArchiveCompatibilityParams;
 import android.os.UserHandle;
 import android.util.Log;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.core.os.BuildCompat;
@@ -59,6 +62,9 @@ import com.android.launcher3.notification.NotificationListener;
 import com.android.launcher3.pm.InstallSessionHelper;
 import com.android.launcher3.pm.InstallSessionTracker;
 import com.android.launcher3.pm.UserCache;
+import com.android.launcher3.util.DisplayController;
+import com.android.launcher3.util.DisplayController.DisplayInfoChangeListener;
+import com.android.launcher3.util.DisplayController.Info;
 import com.android.launcher3.util.LockedUserState;
 import com.android.launcher3.util.MainThreadInitializedObject;
 import com.android.launcher3.util.PackageManagerHelper;
@@ -85,12 +91,14 @@ public class LauncherAppState implements SafeCloseable {
 
     private final Context mContext;
     private final LauncherModel mModel;
-    private final LauncherIconProvider mIconProvider;
+    private final IconProvider mIconProvider;
     private final IconCache mIconCache;
     private final InvariantDeviceProfile mInvariantDeviceProfile;
     private boolean mIsSafeModeEnabled;
 
     private final RunnableList mOnTerminateCallback = new RunnableList();
+
+    private boolean mNeedsRestart;
 
     public static LauncherAppState getInstance(Context context) {
         return INSTANCE.get(context);
@@ -152,23 +160,6 @@ public class LauncherAppState implements SafeCloseable {
                 .addUserEventListener(mModel::onUserEvent);
         mOnTerminateCallback.add(userChangeListener::close);
 
-        if (enableSmartspaceRemovalToggle()) {
-            OnSharedPreferenceChangeListener firstPagePinnedItemListener =
-                    new OnSharedPreferenceChangeListener() {
-                        @Override
-                        public void onSharedPreferenceChanged(
-                                SharedPreferences sharedPreferences, String key) {
-                            if (SMARTSPACE_ON_HOME_SCREEN.equals(key)) {
-                                mModel.forceReload();
-                            }
-                        }
-                    };
-            LauncherPrefs.getPrefs(mContext).registerOnSharedPreferenceChangeListener(
-                    firstPagePinnedItemListener);
-            mOnTerminateCallback.add(() -> LauncherPrefs.getPrefs(mContext)
-                    .unregisterOnSharedPreferenceChangeListener(firstPagePinnedItemListener));
-        }
-
         LockedUserState.get(context).runOnUserUnlocked(() -> {
             CustomWidgetManager cwm = CustomWidgetManager.INSTANCE.get(mContext);
             mOnTerminateCallback.add(cwm.addWidgetRefreshCallback(mModel::rebindCallbacks)::close);
@@ -202,7 +193,7 @@ public class LauncherAppState implements SafeCloseable {
         mContext = context;
 
         mInvariantDeviceProfile = InvariantDeviceProfile.INSTANCE.get(context);
-        mIconProvider = new LauncherIconProvider(context);
+        mIconProvider = com.android.launcher3.icons.ThirdPartyIconProvider.INSTANCE.get(context);
         mIconCache = new IconCache(mContext, mInvariantDeviceProfile,
                 iconCacheFileName, mIconProvider);
         mModel = new LauncherModel(context, this, mIconCache,
@@ -211,6 +202,23 @@ public class LauncherAppState implements SafeCloseable {
                 PackageManagerHelper.INSTANCE.get(context), iconCacheFileName != null);
         mOnTerminateCallback.add(mIconCache::close);
         mOnTerminateCallback.add(mModel::destroy);
+
+        DisplayInfoChangeListener displayListener = new DisplayInfoChangeListener() {
+            @Override
+            public void onDisplayInfoChanged(Context context, Info info, int flags) {
+                if ((flags & CHANGE_UI_MODE) != 0 || (flags & CHANGE_OVERLAYS) != 0) {
+                    Log.d(Launcher.TAG, "onDisplayInfoChanged " + flags);
+                    MODEL_EXECUTOR.execute(() -> mIconCache.clearDb());
+                    mModel.forceReload();
+                    if ((flags & CHANGE_OVERLAYS) != 0) {
+                        Utilities.restart();
+                    }
+                }
+            }
+        };
+        DisplayController.INSTANCE.get(mContext).addChangeListener(displayListener);
+        mOnTerminateCallback.add(
+                () -> DisplayController.INSTANCE.get(mContext).removeChangeListener(displayListener));
     }
 
     private void onNotificationSettingsChanged(boolean areNotificationDotsEnabled) {
@@ -230,6 +238,20 @@ public class LauncherAppState implements SafeCloseable {
 
     private void onPrivateSpaceHideWhenLockChanged(boolean isPrivateSpaceHideOnLockEnabled) {
         mModel.forceReload();
+    }
+
+    public void setNeedsRestart() {
+        mNeedsRestart = true;
+    }
+
+    public void checkIfRestartNeeded() {
+        // we destroyed Settings activity with the back button
+        // so we force a restart now if needed without waiting for home button press
+        if (mNeedsRestart) {
+            mNeedsRestart = false;
+            Toast.makeText(mContext, R.string.restarting_launcher_changes, Toast.LENGTH_SHORT).show();
+            Utilities.restart();
+        }
     }
 
     private void refreshAndReloadLauncher() {
@@ -299,7 +321,10 @@ public class LauncherAppState implements SafeCloseable {
         @Override
         public void onPrefChanged(String key) {
             if (Themes.KEY_THEMED_ICONS.equals(key)) {
-                mIconProvider.setIconThemeSupported(Themes.isThemedIconEnabled(mContext));
+                if (mIconProvider instanceof LauncherIconProvider) {
+                    ((LauncherIconProvider) mIconProvider)
+                        .setIconThemeSupported(Themes.isThemedIconEnabled(mContext));
+                }
                 verifyIconChanged();
             } else if (GRID_NAME_PREFS_KEY.equals(key)) {
                 FileLog.d(TAG, "onPrefChanged GRID_NAME changed: "
